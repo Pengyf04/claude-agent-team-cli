@@ -12,7 +12,7 @@ for a in "$@"; do case "$a" in --yes|-y) YES=1 ;; -h|--help) sed -n '2,4p' "$0";
 
 say() { printf '%s\n' "$*"; }
 say "将执行："
-say "  1) 删除 $DEST（符号链接只删链接，不动仓库）"
+say "  1) 删除 $DEST（符号链接只删链接，不动仓库）及安装时的备份目录"
 say "  2) 从 $SETTINGS 的 hooks.SessionStart 中移除 command 含 agent-team-cli/scripts/session-recover.sh 的条目（先备份）"
 say "  注意：不会删除各项目内的 runs/、.claude/agent-team-cli/、.claude/settings.local.json"
 if [ "$YES" = 0 ]; then printf '继续？[y/N] '; read -r ans; case "$ans" in y|Y|yes|YES) ;; *) say "已取消"; exit 0 ;; esac; fi
@@ -20,6 +20,7 @@ if [ "$YES" = 0 ]; then printf '继续？[y/N] '; read -r ans; case "$ans" in y|
 if [ -L "$DEST" ]; then rm "$DEST"; say "已删除符号链接 $DEST"
 elif [ -d "$DEST" ]; then rm -rf "$DEST"; say "已删除目录 $DEST"
 else say "未发现 $DEST，跳过"; fi
+rm -rf "$DEST.bak" "$DEST".bak-* "$CLAUDE_HOME/agent-team-cli.backup" 2>/dev/null || true
 
 if [ -f "$SETTINGS" ] && command -v python3 >/dev/null 2>&1; then
   cp "$SETTINGS" "$SETTINGS.bak-$(date +%Y%m%d%H%M%S)"

@@ -19,7 +19,7 @@ LINK=0; NOHOOK=0; YES=0
 for a in "$@"; do
   case "$a" in
     --link) LINK=1 ;; --no-hook) NOHOOK=1 ;; --yes|-y) YES=1 ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
     *) echo "未知参数: $a" >&2; exit 1 ;;
   esac
 done
@@ -63,11 +63,14 @@ if [ -L "$DEST" ] || [ -e "$DEST" ]; then
   if [ -L "$DEST" ] && [ "$(readlink "$DEST")" = "$SRC" ]; then
     say "已存在指向本仓库的符号链接，保持不变"
   else
-    BK="$DEST.bak"
-    rm -rf "$BK"
+    # 备份放到 skills/ 之外，避免备份目录被 Claude Code 当作同名 skill 加载
+    BK="$CLAUDE_HOME/agent-team-cli.backup"
+    rm -rf "$BK"; mkdir -p "$(dirname "$BK")"
     mv "$DEST" "$BK"
     say "已将原有 $DEST 备份为 $BK（只保留最近一份）"
   fi
+  # 清理旧版本遗留在 skills/ 内的备份（会被误加载为 skill）
+  rm -rf "$DEST.bak" "$DEST".bak-* 2>/dev/null || true
 fi
 if [ ! -e "$DEST" ]; then
   if [ "$LINK" = 1 ]; then ln -s "$SRC" "$DEST"; else cp -R "$SRC" "$DEST"; fi
@@ -79,9 +82,8 @@ say "skill 已安装: $DEST"
 if [ "$NOHOOK" = 0 ]; then
   mkdir -p "$(dirname "$SETTINGS")"
   [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
-  cp "$SETTINGS" "$SETTINGS.bak-$(date +%Y%m%d%H%M%S)"
   HOOK_CMD="$HOOK_CMD" SETTINGS="$SETTINGS" python3 - <<'PY'
-import json, os, sys
+import json, os, sys, shutil, time
 p = os.environ["SETTINGS"]; cmd = os.environ["HOOK_CMD"]
 try:
     with open(p, encoding="utf-8") as f:
@@ -89,18 +91,23 @@ try:
 except json.JSONDecodeError as e:
     print(f"错误: {p} 不是合法 JSON（{e}），未修改。请手动修复后重跑或使用 --no-hook", file=sys.stderr); sys.exit(1)
 if not isinstance(d, dict): d = {}
-hooks = d.setdefault("hooks", {})
-ss = hooks.setdefault("SessionStart", [])
-if any(h.get("command") == cmd for e in ss if isinstance(e, dict) for h in e.get("hooks", [])):
-    print("hook 已存在，跳过（幂等）")
+hooks = d.get("hooks")
+if not isinstance(hooks, dict): hooks = {}; d["hooks"] = hooks
+ss = hooks.get("SessionStart")
+if not isinstance(ss, list): ss = []; hooks["SessionStart"] = ss
+exists = any(isinstance(h, dict) and h.get("command") == cmd
+             for e in ss if isinstance(e, dict) for h in (e.get("hooks") or []))
+if exists:
+    print("hook 已存在，跳过（幂等，settings.json 未改动）")
 else:
+    bk = f"{p}.bak-{time.strftime('%Y%m%d%H%M%S')}"
+    shutil.copyfile(p, bk)
     ss.append({"matcher": "startup|resume|compact",
                "hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
     with open(p, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=2); f.write("\n")
-    print("hook 已注册")
+    print(f"hook 已注册（原文件已备份为 {bk}）")
 PY
-  say "settings.json 已备份并更新: $SETTINGS"
 fi
 
 say ""

@@ -14,8 +14,8 @@ SOURCE="$(cat 2>/dev/null | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]
 shopt -s nullglob
 FOUND=()
 for f in "$PROJ"/runs/*/state.md; do
-  head -1 "$f" 2>/dev/null | grep -q "$SKILL_MARK" || continue
-  grep -q '^阶段: *\[P5\] *完成' "$f" 2>/dev/null && continue
+  head -10 "$f" 2>/dev/null | grep -q "$SKILL_MARK" || continue
+  head -20 "$f" 2>/dev/null | grep -Eq '^阶段:.*P5.*(完成|done|放弃)' && continue
   FOUND+=("$f")
 done
 [ ${#FOUND[@]} -eq 0 ] && exit 0

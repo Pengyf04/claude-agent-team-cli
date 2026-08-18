@@ -5,10 +5,10 @@
 # - 窗口 ID 逐个落盘到 <项目>/.claude/agent-team-cli/windows.txt（边开边记，中途失败也有记录）
 # - 团队后缀（建议=任务 slug，主控默认传入）：角色会话名变为 <role>-<后缀>，多项目并行/旧团队残留零撞名；不传则用裸角色名
 # - 环境变量（均可选）：
-#     ATC_MODEL_DEFAULT            所有角色默认模型（默认 claude-fable-5）
-#     ATC_MODEL_PLANNER / ATC_MODEL_PLAN_REVIEWER / ATC_MODEL_EXECUTOR / ATC_MODEL_VERIFIER  单角色覆盖
-#                                  （executor 默认 claude-opus-5，其余默认 = ATC_MODEL_DEFAULT）
-#     ATC_EFFORT_DEFAULT           默认 effort（默认 xhigh）；ATC_EFFORT_<ROLE> 单角色覆盖（executor 默认 high）
+#     内置默认：planner/plan-reviewer/verifier = claude-fable-5 + xhigh；executor = claude-opus-5 + high
+#     ATC_MODEL_DEFAULT            设置后覆盖所有角色（含 executor）的模型
+#     ATC_MODEL_PLANNER / ATC_MODEL_PLAN_REVIEWER / ATC_MODEL_EXECUTOR / ATC_MODEL_VERIFIER  单角色覆盖（优先级最高）
+#     ATC_EFFORT_DEFAULT / ATC_EFFORT_<ROLE>   同上，作用于 effort
 #     ATC_PERMISSION_MODE          子会话权限模式（默认 bypassPermissions；可改 acceptEdits/auto 等，代价是循环可能停下等确认）
 #     DRY_RUN=1                    只生成 runner 不开窗；POSITION_MAIN=0 不移动 main 窗口
 set -euo pipefail
@@ -49,7 +49,6 @@ if [ -f "$WINFILE" ]; then
   rm -f "$WINFILE" "$RUNTIME_DIR"/run-*.sh
 fi
 
-command -v claude >/dev/null || { echo "错误: 找不到 claude 命令" >&2; exit 1; }
 mkdir -p "$RUNTIME_DIR"
 [ -z "$SUFFIX" ] && echo "提示: 未传团队后缀，角色将使用裸名 planner/plan-reviewer/executor/verifier（多项目并行时建议传入任务 slug 作后缀）" >&2
 
@@ -61,19 +60,15 @@ model_for() {
   local k; k="$(envkey_for "$1")"
   local v; v="$(eval "echo \"\${ATC_MODEL_$k:-}\"")"
   if [ -n "$v" ]; then echo "$v"; return; fi
-  case "$1" in
-    executor) echo "${ATC_MODEL_EXECUTOR_DEFAULT:-claude-opus-5}" ;;
-    *)        echo "${ATC_MODEL_DEFAULT:-claude-fable-5}" ;;
-  esac
+  if [ -n "${ATC_MODEL_DEFAULT:-}" ]; then echo "$ATC_MODEL_DEFAULT"; return; fi
+  case "$1" in executor) echo claude-opus-5 ;; *) echo claude-fable-5 ;; esac
 }
 effort_for() {
   local k; k="$(envkey_for "$1")"
   local v; v="$(eval "echo \"\${ATC_EFFORT_$k:-}\"")"
   if [ -n "$v" ]; then echo "$v"; return; fi
-  case "$1" in
-    executor) echo "${ATC_EFFORT_EXECUTOR_DEFAULT:-high}" ;;
-    *)        echo "${ATC_EFFORT_DEFAULT:-xhigh}" ;;
-  esac
+  if [ -n "${ATC_EFFORT_DEFAULT:-}" ]; then echo "$ATC_EFFORT_DEFAULT"; return; fi
+  case "$1" in executor) echo high ;; *) echo xhigh ;; esac
 }
 PERM_MODE="${ATC_PERMISSION_MODE:-bypassPermissions}"
 case "$PERM_MODE" in default|acceptEdits|plan|auto|dontAsk|bypassPermissions|manual) ;;
@@ -128,10 +123,15 @@ if [ "${DRY_RUN:-0}" = "1" ]; then
   echo "DRY_RUN=1: runner 已生成于 $RUNTIME_DIR/，跳过开窗。屏幕(${SL},${STOP})-(${SR},${SBOT}) mainR=$MAINR colW=$COLW rowH=$ROWH"
   exit 0
 fi
+command -v claude >/dev/null || { echo "错误: 找不到 claude 命令（请先安装 Claude Code 并确保在 PATH 中）" >&2; exit 1; }
 
-# ---------- 记录 main 窗口（仅当 main 确实跑在 Terminal 里时定位；POSITION_MAIN=0 跳过） ----------
+# ---------- 记录 main 窗口：默认仅当主控本身运行在 Terminal.app（TERM_PROGRAM=Apple_Terminal）时才移动其前窗；
+#            主控在 iTerm2/VS Code/桌面版等处时不动任何已有 Terminal 窗口。POSITION_MAIN=1/0 可强制。 ----------
 MAIN_WID=0
-if [ "${POSITION_MAIN:-1}" = "1" ]; then
+if [ -z "${POSITION_MAIN:-}" ]; then
+  if [ "${TERM_PROGRAM:-}" = "Apple_Terminal" ]; then POSITION_MAIN=1; else POSITION_MAIN=0; fi
+fi
+if [ "$POSITION_MAIN" = "1" ]; then
   MAIN_WID="$(osascript <<'OSA' 2>/dev/null || echo 0
 if application "Terminal" is running then
   tell application "Terminal"
@@ -141,6 +141,12 @@ end if
 return 0
 OSA
 )"
+fi
+# 运行时产物不入用户项目的 git（写入 .git/info/exclude，不动用户的 .gitignore）
+if [ -d "$PROJ/.git/info" ] || { [ -d "$PROJ/.git" ] && mkdir -p "$PROJ/.git/info"; }; then
+  for pat in ".claude/agent-team-cli/" ".claude/settings.local.json"; do
+    grep -qxF "$pat" "$PROJ/.git/info/exclude" 2>/dev/null || echo "$pat" >> "$PROJ/.git/info/exclude"
+  done
 fi
 : > "$WINFILE"
 echo "main=$MAIN_WID" >> "$WINFILE"
@@ -153,8 +159,23 @@ on run argv
   set runnerPath to item 1 of argv
   tell application "Terminal"
     activate
-    do script "bash " & quoted form of runnerPath
-    delay 0.8
+    set t to do script "bash " & quoted form of runnerPath
+    -- 用新 tab 的 tty 精确定位其所属窗口，避免"取前窗"的竞态（用户此刻点了别的窗口也不会记错）
+    set theTTY to ""
+    repeat 30 times
+      try
+        set theTTY to tty of t
+        if theTTY is not "" then exit repeat
+      end try
+      delay 0.1
+    end repeat
+    if theTTY is not "" then
+      repeat with w in windows
+        try
+          if (tty of tab 1 of w) is theTTY then return id of w
+        end try
+      end repeat
+    end if
     return id of front window
   end tell
 end run

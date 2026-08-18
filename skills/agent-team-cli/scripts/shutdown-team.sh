@@ -1,13 +1,25 @@
 #!/bin/bash
-# shutdown-team.sh <项目目录>
+# shutdown-team.sh <项目目录> [--abandon <slug>]
 # 关闭 launch-team.sh 记录的角色窗口：先结束窗口内进程（轮询确认退出，超时升级 kill -9），
 # 再关窗口（避免 Terminal 弹"终止进程"确认框）。不动 main 窗口。清理 runner 脚本与记录文件。
+# --abandon <slug>：把 runs/<slug>/state.md 的阶段标记为已放弃完成，避免恢复 hook 继续注入。
 set -euo pipefail
 
-PROJ="$(cd "${1:?用法: shutdown-team.sh <项目目录>}" && pwd)"
+PROJ="$(cd "${1:?用法: shutdown-team.sh <项目目录> [--abandon <slug>]}" && pwd)"
+ABANDON=""
+if [ "${2:-}" = "--abandon" ]; then ABANDON="${3:?--abandon 需要 <slug>}"; fi
+if [ -n "$ABANDON" ]; then
+  ST="$PROJ/runs/$ABANDON/state.md"
+  if [ -f "$ST" ]; then
+    if grep -q '^阶段:' "$ST"; then sed -i '' 's/^阶段:.*/阶段: [P5] 完成（已放弃）/' "$ST"; else printf '阶段: [P5] 完成（已放弃）\n' >> "$ST"; fi
+    echo "已将 $ST 标记为已放弃，恢复 hook 不再注入"
+  else
+    echo "警告: 未找到 $ST" >&2
+  fi
+fi
 RUNTIME_DIR="$PROJ/.claude/agent-team-cli"
 WINFILE="$RUNTIME_DIR/windows.txt"
-[ -f "$WINFILE" ] || { echo "错误: 找不到 $WINFILE（未用 launch-team.sh 启动过？）" >&2; exit 1; }
+[ -f "$WINFILE" ] || { echo "提示: 找不到 $WINFILE（团队未启动或窗口已手动关闭并清理）"; exit 0; }
 
 while IFS= read -r pair; do
   [ -z "$pair" ] && continue

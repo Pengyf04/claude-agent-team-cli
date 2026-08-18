@@ -16,7 +16,7 @@
 | 现象 | 处理 |
 |---|---|
 | READY 收不齐 | 去对应窗口看是否卡在「文件夹信任」/「Bypass Permissions 警告」确认框；`/list-agents` 看会话是否在；主控可 SendMessage ping 一次 |
-| 主控收到消息被 hold / 弹批准框 | 主控启动时未加载 `crossSessionInbound: accept`（P1 才写入）——带同样 `--name` 重启主控，重新调用 skill（会跳过已完成步骤） |
+| 主控收到消息被 hold / 弹批准框 | 主控启动时未加载 `crossSessionInbound: accept`——下次可在启动主控前先跑 `scripts/ensure-inbound.sh <项目>`（或用 `--settings '{"crossSessionInbound":"accept"}'` 启动）；本次带同样 `--name` 重启主控并重新调用 skill，重入检查会续跑并让角色重发 READY |
 | `ListAgents` 里角色出现两份 | 旧团队没关：手动关旧窗口或跑 `shutdown-team.sh`；角色名带 slug 后缀可从根上避免 |
 | launch 脚本报"旧团队窗口仍在运行" | 记录的窗口还开着，先关；若窗口已关，脚本会自动清理陈旧记录 |
 | 窗口没按田字格排好 | 布局失败不影响运行；开窗几秒内不要点其他 Terminal 窗口；外接屏聚焦时用主屏 |
@@ -38,3 +38,5 @@
 |---|---|
 | 想关 4 个窗口 | `bash ~/.claude/skills/agent-team-cli/scripts/shutdown-team.sh <项目>`；或手动关（下次启动脚本会自动清理陈旧记录） |
 | 项目不再跑团队 | 可移除 `.claude/settings.local.json` 里的 `crossSessionInbound` 键（P5 会问） |
+| 任务中途放弃后，每次开会话都被注入"存在进行中的 Agent Team 任务" | `shutdown-team.sh <项目> --abandon <slug>`（把 state.md 阶段标为已放弃完成），或删 `runs/<slug>/` |
+| 升级 | `git pull && ./install.sh`；`--link` 模式无需重装 |

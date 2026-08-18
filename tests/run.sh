@@ -37,6 +37,7 @@ check "runner 语法" "bash -n '$P/.claude/agent-team-cli/run-planner.sh'"
 rm -rf "$P/.claude"
 ATC_MODEL_DEFAULT=opus ATC_MODEL_PLAN_REVIEWER=sonnet ATC_EFFORT_EXECUTOR=medium ATC_PERMISSION_MODE=acceptEdits DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main demo >/dev/null 2>&1
 check "覆盖: ATC_MODEL_DEFAULT→planner=opus" "grep -q -- '--model \"opus\"' '$P/.claude/agent-team-cli/run-planner.sh'"
+check "覆盖: ATC_MODEL_DEFAULT 也作用于 executor" "grep -q -- '--model \"opus\"' '$P/.claude/agent-team-cli/run-executor.sh'"
 check "覆盖: ATC_MODEL_PLAN_REVIEWER=sonnet" "grep -q -- '--model \"sonnet\"' '$P/.claude/agent-team-cli/run-plan-reviewer.sh'"
 check "覆盖: ATC_EFFORT_EXECUTOR=medium" "grep -q -- '--effort \"medium\"' '$P/.claude/agent-team-cli/run-executor.sh'"
 check "覆盖: ATC_PERMISSION_MODE=acceptEdits" "grep -q -- '--permission-mode \"acceptEdits\"' '$P/.claude/agent-team-cli/run-executor.sh'"
@@ -45,6 +46,23 @@ check "非法权限模式被拒绝" "! ATC_PERMISSION_MODE=yolo DRY_RUN=1 bash '
 check "路径含单引号被拒绝" "! DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' \"$TMP/it's\" main demo >/dev/null 2>&1"
 rm -rf "$P/.claude"; DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main >/dev/null 2>&1
 check "无后缀: 裸角色名" "grep -q -- '--name \"executor\"' '$P/.claude/agent-team-cli/run-executor.sh'"
+
+echo "== 3b. ensure-inbound.sh =="
+E="$SKILL/scripts/ensure-inbound.sh"; Q="$TMP/proj2"; mkdir -p "$Q/.claude" && git -C "$Q" init -q 2>/dev/null
+printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$Q/.claude/settings.local.json"
+check "首次写入输出 NEW 且保留其他键" "[ \"\$(bash '$E' '$Q')\" = NEW ] && grep -q 'Bash(ls)' '$Q/.claude/settings.local.json' && grep -q '\"crossSessionInbound\": \"accept\"' '$Q/.claude/settings.local.json'"
+check "再次运行输出 EXISTS" "[ \"\$(bash '$E' '$Q')\" = EXISTS ]"
+check ".git/info/exclude 含运行时产物" "grep -qxF '.claude/agent-team-cli/' '$Q/.git/info/exclude' && grep -qxF '.claude/settings.local.json' '$Q/.git/info/exclude'"
+
+echo "== 3c. shutdown-team.sh --abandon =="
+mkdir -p "$Q/runs/demo" && printf 'skill: agent-team-cli/SKILL.md\n阶段: [2] 执行验证环\n' > "$Q/runs/demo/state.md"
+bash "$SKILL/scripts/shutdown-team.sh" "$Q" --abandon demo >/dev/null 2>&1
+check "--abandon 把阶段改为已放弃完成" "grep -q '^阶段: \[P5\] 完成（已放弃）' '$Q/runs/demo/state.md'"
+check "无 windows.txt 时 shutdown 温和退出(0)" "bash '$SKILL/scripts/shutdown-team.sh' '$Q' >/dev/null 2>&1"
+
+echo "== 3d. PATH 无 claude 时 DRY_RUN 仍可用（CI 场景）=="
+rm -rf "$P/.claude"
+check "无 claude 也能 DRY_RUN" "env -i HOME='$HOME' PATH=/usr/bin:/bin DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' '$P' main demo >/dev/null 2>&1 && [ -f '$P/.claude/agent-team-cli/run-planner.sh' ]"
 
 echo "== 4. 陈旧记录判定 =="
 rm -rf "$P/.claude"; mkdir -p "$P/.claude/agent-team-cli"
@@ -58,6 +76,8 @@ mkdir -p "$TMP/empty"; cd "$TMP/empty"
 check "无任务目录 → 静默" "[ -z \"\$(echo '{\"source\":\"startup\"}' | bash '$H')\" ]"
 mkdir -p "$TMP/done/runs/x" && printf 'skill: ~/.claude/skills/agent-team-cli/SKILL.md\nmain会话名: main\n阶段: [P5] 完成\n' > "$TMP/done/runs/x/state.md"; cd "$TMP/done"
 check "已完成任务 → 静默" "[ -z \"\$(echo '{\"source\":\"compact\"}' | bash '$H')\" ]"
+mkdir -p "$TMP/aband/runs/z" && printf 'skill: ~/.claude/skills/agent-team-cli/SKILL.md\n阶段: [P5] 完成（已放弃）\n' > "$TMP/aband/runs/z/state.md"; cd "$TMP/aband"
+check "已放弃任务 → 静默" "[ -z \"\$(echo '{\"source\":\"compact\"}' | bash '$H')\" ]"
 mkdir -p "$TMP/live/runs/y" && printf 'skill: ~/.claude/skills/agent-team-cli/SKILL.md\nmain会话名: main\n阶段: [2] 执行验证环\n正在等待: verifier\n' > "$TMP/live/runs/y/state.md"; cd "$TMP/live"
 OUT="$(echo '{"source":"compact"}' | bash "$H")"
 check "进行中任务 → 注入且识别 compact" "echo \"\$OUT\" | grep -q 'agent-team-cli-recovery' && echo \"\$OUT\" | grep -q '上下文刚被压缩' && echo \"\$OUT\" | grep -q '正在等待: verifier'"
@@ -76,11 +96,13 @@ if command -v python3 >/dev/null 2>&1; then
   CLAUDE_HOME="$FAKE" bash "$ROOT/install.sh" --yes >/dev/null 2>&1
   check "install 幂等: 再装仍 1 条 hook" "[ \"\$(cnt)\" = 1 ]"
   check "install: 其他 hooks/permissions 保留" "python3 -c \"import json;d=json.load(open('$FAKE/settings.json'));assert d['permissions']['defaultMode']=='default' and len(d['hooks']['PreToolUse'])==1\""
-  check "install: 只保留一份备份目录" "[ \"\$(ls -d '$FAKE'/skills/agent-team-cli.bak* 2>/dev/null | wc -l | tr -d ' ')\" = 1 ]"
+  check "install: 备份在 skills/ 之外且 skills/ 内无 .bak" "[ -d '$FAKE/agent-team-cli.backup' ] && [ -z \"\$(ls -d '$FAKE'/skills/agent-team-cli.bak* 2>/dev/null)\" ]"
+  check "install: 幂等重装不新增 settings 备份" "[ \"\$(ls '$FAKE'/settings.json.bak-* 2>/dev/null | wc -l | tr -d ' ')\" = 1 ]"
   CLAUDE_HOME="$FAKE" bash "$ROOT/install.sh" --link --yes >/dev/null 2>&1
   check "install --link: 是符号链接" "[ -L '$FAKE/skills/agent-team-cli' ]"
   CLAUDE_HOME="$FAKE" bash "$ROOT/uninstall.sh" --yes >/dev/null 2>&1
   check "uninstall: skill 已删" "[ ! -e '$FAKE/skills/agent-team-cli' ]"
+  check "uninstall: 备份目录已清理" "[ ! -e '$FAKE/agent-team-cli.backup' ]"
   check "uninstall: hook 已删且其他保留" "[ \"\$(cnt)\" = 0 ] && python3 -c \"import json;d=json.load(open('$FAKE/settings.json'));assert 'PreToolUse' in d['hooks'] and 'permissions' in d\""
   rm -rf "$FAKE"; mkdir -p "$FAKE"; echo '{}' > "$FAKE/settings.json"
   CLAUDE_HOME="$FAKE" bash "$ROOT/install.sh" --no-hook --yes >/dev/null 2>&1

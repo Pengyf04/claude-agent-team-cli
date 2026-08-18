@@ -26,8 +26,11 @@
 ## 复现
 
 ```bash
-cd <一个空目录> && git init
+mkdir demo && cd demo && git init
+bash ~/.claude/skills/agent-team-cli/scripts/ensure-inbound.sh .
 claude --name main
-# 会话内：
-/agent-team-cli 用 Python 标准库实现命令行番茄钟 pomodoro.py（支持自定义时长/暂停恢复/结束提醒）+ pytest 测试；验收标准见 examples/pomodoro-cli/task.md
+# 会话内（把 task.md 的验收标准直接贴进去，或给出它在你机器上的绝对路径）：
+/agent-team-cli 用 Python 标准库实现命令行番茄钟 pomodoro.py + pytest 测试。验收标准：<粘贴 task.md 中的 7 条>
 ```
+
+> 注：verify-report.md / plan.md 里提到的 `rtk` / `rtk proxy` 是原作者本机的一个命令代理工具，与本框架无关；陌生环境不会遇到，可忽略。

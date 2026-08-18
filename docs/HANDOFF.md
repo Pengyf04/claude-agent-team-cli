@@ -30,3 +30,14 @@ macOS only；仅 Claude 系模型；Fast 需手动；中文 prompt。Roadmap：�
 - SendMessage 目标不在"本会话"时要用 `名字 [ref]` 形式。
 - 主控空闲不会自己醒：任何"超时"都必须靠后台 `sleep` 看门狗。
 - 不要在 `/goal` 等自动续跑模式下运行 skill——人工卡点会被反复催促（SKILL 已加固：绝不替用户放行）。
+
+## 待办：首次发布 v0.1.0（本地已提交，尚未推到 GitHub）
+由新维护会话执行，执行前与用户确认：
+```bash
+cd ~/Claude_Code/claude-agent-team-cli
+bash tests/run.sh                                     # 必须全绿
+gh repo create Pengyf04/claude-agent-team-cli --public --source=. --remote=origin --description "多窗口多会话的 Claude Code Agent Team 编排框架" --push
+git tag v0.1.0 && git push origin v0.1.0
+gh release create v0.1.0 --title "v0.1.0" --notes-file CHANGELOG.md
+```
+发布后：在一个干净目录按 README 从零 `git clone` + `./install.sh` 验证一次；README 顶部可加 CI 徽章。

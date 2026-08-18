@@ -22,6 +22,7 @@
 | `scripts/shutdown-team.sh` | 按记录先结束窗口内进程再关窗，清理 runner |
 | `scripts/session-recover.sh` | 用户级 SessionStart hook：项目内存在未完成 `runs/*/state.md` 时把内容与恢复指引注入会话（startup / resume / compact 触发）；其他情况静默 |
 | `scripts/ensure-inbound.sh` | 安全 merge `crossSessionInbound: accept` 进项目 `.claude/settings.local.json`（幂等）+ 运行时产物写入 `.git/info/exclude`；用户可在启动主控前手动跑，SKILL P1 也会调用 |
+| `scripts/restart-role.sh` | 重启单个角色会话（结束旧窗口进程 → 同一 runner 重开 → 同名重新注册 → 更新 windows.txt），用于角色会话"坏了"的恢复 |
 | `scripts/doctor.sh` | 只读自检 |
 
 ## 状态机（继承自 claude-agent-team）
@@ -38,7 +39,8 @@
 ## 通信协议
 
 - **寻址**：按会话名（`claude --name`）；多项目并行时角色名带 slug 后缀。角色回报时以来信的 `from` 地址为准，不依赖主控名。
-- **来源校验（双通道）**：角色只执行 (a) `from-name` 等于启动时告知的主控名，或 (b) `from` 地址等于首次 READY 握手成功送达的地址（TOFU 锚定）的消息；其他来源不执行、上报主控。
+- **来源校验（令牌）**：`launch-team.sh` 生成随机团队令牌（`.claude/agent-team-cli/token`）并注入各角色启动指令；主控每条发给角色的消息带 `令牌: <值>`，角色只执行含令牌的消息。不依赖 from-name/地址（桌面版主控显示名≠注册名；角色无法观测 READY 的送达地址）。
+- **回报寻址**：角色一律按启动时告知的**主控会话名**回报，**绝不发 socket 地址**——实测发往地址的消息会被系统扣住，且该发送方此后发往同一收件方的消息会持续被扣；每次回报只发一次，重发需间隔并换措辞（系统对同一发送方去重+限流）。
 - **消息 = 信号，文件 = 内容**：回报正文 ≤10 行，最后一行**单行**结构化标记；详情落 `runs/<slug>/`。
 - **派活模板**：模式 + 工作区路径 + 要读的文件 + "完成后回报 <主控名>，最后一行标记"。
 - **唤醒**：空闲会话收到消息即开新 turn（官方机制）；主控每次派活后起后台 `sleep` 看门狗，到点若无回报则提示用户目视窗口。

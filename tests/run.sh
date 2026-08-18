@@ -22,7 +22,11 @@ check "SKILL.md 有 description" "grep -q '^description: ' '$SKILL/SKILL.md'"
 for r in planner plan-reviewer executor verifier; do
   check "roles/$r.md 存在且含通信协议" "grep -q '通信协议' '$SKILL/roles/$r.md'"
 done
-check "角色协议含 TOFU 双通道校验" "grep -q '首次 READY 握手' '$SKILL/roles/executor.md'"
+for r in planner plan-reviewer executor verifier; do
+  check "roles/$r.md 含令牌校验/名字回报/mktemp 纪律" "grep -q '团队令牌' '$SKILL/roles/$r.md' && grep -q '绝不发往 socket 地址' '$SKILL/roles/$r.md' && grep -q 'mktemp -d' '$SKILL/roles/$r.md'"
+done
+check "restart-role.sh 语法" "bash -n '$SKILL/scripts/restart-role.sh'"
+check "restart-role.sh 拒绝非法角色" "! bash '$SKILL/scripts/restart-role.sh' '$TMP' bogus >/dev/null 2>&1"
 
 echo "== 3. launch-team.sh DRY_RUN =="
 P="$TMP/proj"; mkdir -p "$P"
@@ -33,6 +37,10 @@ check "默认: 权限 bypassPermissions" "grep -q -- '--permission-mode \"bypass
 check "后缀: 会话名 executor-demo, 主控名 main" "grep -q -- '--name \"executor-demo\"' '$P/.claude/agent-team-cli/run-executor.sh' && grep -q '主控会话名为「main」' '$P/.claude/agent-team-cli/run-executor.sh'"
 check "runner 含 crossSessionInbound accept 与角色 prompt 注入" "grep -q 'crossSessionInbound' '$P/.claude/agent-team-cli/run-planner.sh' && grep -q -- '--append-system-prompt' '$P/.claude/agent-team-cli/run-planner.sh'"
 check "runner 含 claude 检测" "grep -q 'command -v claude' '$P/.claude/agent-team-cli/run-planner.sh'"
+check "生成了团队令牌文件且注入 runner 启动指令" "[ -s '$P/.claude/agent-team-cli/token' ] && grep -q \"团队令牌为「\$(cat '$P/.claude/agent-team-cli/token')」\" '$P/.claude/agent-team-cli/run-planner.sh'"
+TOK1="$(cat "$P/.claude/agent-team-cli/token")"
+DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main demo >/dev/null 2>&1
+check "重复生成 runner 时令牌保持不变" "[ \"\$(cat '$P/.claude/agent-team-cli/token')\" = '$TOK1' ]"
 check "runner 语法" "bash -n '$P/.claude/agent-team-cli/run-planner.sh'"
 rm -rf "$P/.claude"
 ATC_MODEL_DEFAULT=opus ATC_MODEL_PLAN_REVIEWER=sonnet ATC_EFFORT_EXECUTOR=medium ATC_PERMISSION_MODE=acceptEdits DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main demo >/dev/null 2>&1

@@ -14,8 +14,9 @@
 3. **你的账号要能使用所选模型。** 默认 planner / plan-reviewer / verifier 用 `claude-fable-5`（effort xhigh），executor 用 `claude-opus-5`（effort high）。无 Fable / Opus 权限请 `export ATC_MODEL_DEFAULT=sonnet`（作用于全部角色），见[参数](#参数)。
 4. **用量提醒。** 主控 + 4 个角色 = 5 个并发 Claude 会话；等待中的角色不消耗 token，但一次完整任务的总消耗明显高于单会话。
 5. **安全姿态。** 4 个角色会话默认以 `bypassPermissions` 运行（全自动循环不停下等确认）；**主控启动所在目录会被当作项目根**，若不是 git 仓库，主控会在征得你同意后 `git init` 作为回滚兜底（`$HOME`、嵌套在其他仓库内等情况会拒绝并请你换目录）。可用 `ATC_PERMISSION_MODE` 改为更保守的模式（代价是循环可能停下等你在各窗口批准）。详见[安全说明](#安全说明)。
-6. **需要授权两件事**：首次开窗 macOS 会弹「<运行主控的应用> 想要控制 "Terminal"」的自动化授权，请允许；主控执行开窗脚本时会请求以非沙箱方式运行 Bash（AppleScript 需要），请批准。角色窗口一律在 **Terminal.app** 中打开（主控本身可以运行在任何终端/桌面版里）。
-7. `install.sh` 会在 `~/.claude/settings.json` 追加一条 SessionStart hook（先备份、幂等、可用 `--no-hook` 跳过、`uninstall.sh` 精确移除）。
+6. **需要授权两件事**：首次开窗 macOS 会弹「<运行主控的应用> 想要控制 "Terminal"」的自动化授权，请允许；主控执行开窗/关窗/重启角色脚本时会请求以非沙箱方式运行 Bash（AppleScript 与结束进程需要），请批准。角色窗口一律在 **Terminal.app** 中打开；主控本身可以运行在任何终端里，**也可以是 Claude Code 桌面版的会话**（见下方"桌面版主控"）。
+7. **"全自动"的例外**：Claude Code 对通配符/不可静态解析的 `rm` 等危险操作即使在 bypass 模式下也会在角色窗口弹确认框；角色协议已要求临时文件用 `mktemp -d`、绝不对 `runs/` 用通配符删除，但若真弹出请你在该窗口选择 No 并让主控纠正角色。
+8. `install.sh` 会在 `~/.claude/settings.json` 追加一条 SessionStart hook（先备份、幂等、可用 `--no-hook` 跳过、`uninstall.sh` 精确移除）。
 
 ---
 
@@ -68,11 +69,12 @@ claude --name main              # 启动主控；模型/effort 按需自选
 
 ## 它是怎么工作的（30 秒版）
 
-- **通信**：主控用 `SendMessage` 按会话名派活；角色完成后 `SendMessage` 回报，最后一行是结构化标记（`PLAN_READY` / `APPROVED` / `NEEDS_REVISION` / `EXECUTION_DONE` / `PASS` / `FAIL` / `FINAL_ACCEPT` / `FINAL_REJECT` / `BLOCKED`），主控据此走状态机。角色之间**不直接通信**，一切经主控——所以主控始终掌握全局。
+- **通信**：主控用 `SendMessage` 按会话名派活，每条消息带**团队令牌**（开窗时随机生成、注入角色启动指令，角色只认含令牌的消息——不依赖名字或地址）；角色完成后 `SendMessage` **按主控名**回报，最后一行是结构化标记（`PLAN_READY` / `APPROVED` / `NEEDS_REVISION` / `EXECUTION_DONE` / `PASS` / `FAIL` / `FINAL_ACCEPT` / `FINAL_REJECT` / `BLOCKED`），主控据此走状态机。角色之间**不直接通信**，一切经主控——所以主控始终掌握全局。
 - **唤醒**：空闲会话收到消息即自动开始新一轮（Claude Code 原生机制），零轮询；空闲不消耗 token；实测闲置 2 天仍可唤醒。
 - **文件协议**：实质内容走项目内 `runs/<slug>/`（`task.md` / `plan.md` / `review-log.md` / `deliverable/` / `verify-report.md` / `state.md`），消息只传信号。
 - **恢复**：主控每步全量重写 `state.md`；SessionStart hook 在上下文压缩/重启后自动把 state.md 与恢复指引注入会话。
-- **防护**：循环硬上限（5 / 8 / 2）；角色对消息来源做校验（主控名匹配 或 首次握手锚定地址）；跨会话消息本身自带限流去重，两个会话互刷的死循环会被系统掐断。
+- **防护**：循环硬上限（5 / 8 / 2）；角色凭团队令牌识别主控指令；跨会话消息本身自带限流去重，两个会话互刷的死循环会被系统掐断。
+- **恢复**：某个角色会话坏了 → `scripts/restart-role.sh <项目> <角色>` 重启它（同名重新注册、重发 READY），主控继续派活。
 
 细节见 [docs/architecture.md](docs/architecture.md)、设计取舍见 [docs/design-decisions.md](docs/design-decisions.md)。
 
@@ -102,18 +104,27 @@ fast 模式没有启动 flag，且仅 Opus 系支持——需要时在 executor 
 
 - **为什么默认 bypassPermissions**：执行 ⇄ 验证的多轮循环要全自动跑完，角色会话不能停下来等你在 4 个窗口里逐个点批准。兜底是 **git**（框架要求项目为 git 仓库，P1 发现不是会先征得你同意再 `git init`）。想更保守：`ATC_PERMISSION_MODE=acceptEdits`。
 - **`crossSessionInbound: accept`**：主控会写入**项目级** `.claude/settings.local.json`（不进 git）。含义是"本项目里启动的会话收到本机其他会话的消息时直接送达，不弹批准框"——没有它，普通模式的主控收到 bypass 角色的消息会被扣住等你批准，全自动就断了。消息即便送达也仍被标记"来自其他会话"：不能替你批准权限、不能改配置、消息里的斜杠命令不会执行。项目不再跑团队时可移除该键（P5 会问你）。
-- **角色来源校验**：角色只执行来自主控的指令（主控名匹配 或 首次 READY 握手锚定的地址），其他来源的消息不执行、上报主控。
+- **角色来源校验**：角色只执行正文含**团队令牌**的指令（令牌由 `launch-team.sh` 随机生成、写在项目 `.claude/agent-team-cli/token` 并注入角色启动指令）；不含令牌的消息一律不执行。令牌用于区分"本团队的主控"与本机其他会话的误发/伪装消息，不是密码学级防护。
 - **权限边界**：主控绝不指使角色去做主控自己被拒绝的操作（跨会话洗权限）。
 
 ---
+
+## 桌面版主控
+
+主控可以是 Claude Code **桌面版**的一个会话（好处：对话记录完整保留）。已实测可用，但有三点区别：
+- 桌面版会话不能 `--name`，注册名由系统派生（形如 `agent-4f`）。主控会用 `cat ~/.claude/sessions/$PPID.json` 读出自己的注册名再开团队；角色识别主控靠令牌，不受"显示名≠注册名"影响。
+- 桌面版会话**不读取项目级** `.claude/settings.local.json` 的 `crossSessionInbound`，且**不显示**跨会话消息的批准框（被扣的消息会静默过期）。因此桌面版主控要能收到 bypass 角色的消息，需满足其一：把该会话的权限模式设为 **bypassPermissions**（同类直送）；或在用户级 `~/.claude/settings.json` 写 `"crossSessionInbound": "accept"`（作用于本机所有会话）。
+- 桌面版没有 `/status`。
 
 ## 排障速查
 
 | 现象 | 原因 / 处理 |
 |---|---|
 | READY 收不齐 | 对应窗口多半卡在「文件夹信任 / Bypass 警告」确认框，去点一下；或 `/list-agents` 看会话是否在 |
-| 主控提示消息被 hold / 待批准 | 主控启动时还没加载 `crossSessionInbound: accept`——带同样的 `--name` 重启主控后重新调用 skill |
-| 角色回 `BLOCKED: 待确认来源` | 桌面版主控的显示名可能与 `--name` 不同；主控回一句"该地址就是主控"即锚定 |
+| 主控提示消息被 hold / 待批准 | 主控启动时还没加载 `crossSessionInbound: accept`——带同样的 `--name` 重启主控后重新调用 skill；桌面版主控见上一节 |
+| 角色回 `BLOCKED: 消息未含团队令牌` | 主控漏带令牌行，补发带 `令牌: <值>` 的完整指令 |
+| 角色的回报一直收不到，但文件已产出 | 角色可能曾向 socket 地址发过消息（此后其消息会持续被扣）：`scripts/restart-role.sh <项目> <角色>` 重启该角色（非沙箱执行），主控按文件继续 |
+| 角色窗口弹"Dangerous rm … Do you want to proceed?" | 选 **No**；主控会纠正角色改用 `mktemp -d`。这是 Claude Code 的硬安全检查，bypass 也不跳过 |
 | 窗口没排好 | 布局失败不影响运行，手动摆即可（窗口归属按 tty 精确识别，不会因你点了别的窗口而记错） |
 | 首次运行没反应 | 看是否弹了 macOS「自动化」授权；被拒后到 系统设置 → 隐私与安全性 → 自动化 开启 |
 | 角色长时间无回报 | 主控的看门狗会提醒；`/list-agents` 确认在线，看该窗口是否卡确认框；确认空闲后再让主控重发 |

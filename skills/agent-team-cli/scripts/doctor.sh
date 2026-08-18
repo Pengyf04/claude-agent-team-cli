@@ -11,11 +11,29 @@ bad()  { printf '  ❌ %s\n' "$*"; FAIL=1; }
 warn() { printf '  ⚠️  %s\n' "$*"; }
 FAIL=0
 
+# 带超时的 osascript：无窗口服务器/授权未决的环境下 osascript 会无限阻塞而非报错，
+# 自检工具尤其不能卡住。超时按失败处理。用法：osa <秒> osascript ...
+osa() {
+  local secs="$1"; shift
+  local out pid watcher rc
+  out="$(mktemp)"
+  "$@" >"$out" 2>&1 &
+  pid=$!
+  { sleep "$secs"; kill -9 "$pid" 2>/dev/null; } >/dev/null 2>&1 &
+  watcher=$!
+  rc=0; wait "$pid" 2>/dev/null || rc=$?
+  kill -9 "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
+  cat "$out"; rm -f "$out"
+  return "$rc"
+}
+OSA_T="${ATC_OSA_TIMEOUT:-8}"
+
 echo "== 系统 =="
 if [ "$(uname -s)" = "Darwin" ]; then ok "macOS $(sw_vers -productVersion 2>/dev/null)"; else bad "非 macOS（v0.1 仅支持 macOS：开窗依赖 Terminal.app + AppleScript）"; fi
-if osascript -e 'application "Terminal" is running' 2>/dev/null | grep -q true; then
-  if osascript -e 'tell application "Terminal" to get name' >/dev/null 2>&1; then ok "可通过 AppleScript 控制 Terminal.app（自动化授权已通过）"; else warn "无法控制 Terminal.app：若已拒绝授权，到 系统设置→隐私与安全性→自动化 开启"; fi
-else warn "Terminal.app 未运行，跳过自动化授权预检；首次开窗时 macOS 会弹「<运行主控的应用> 想要控制 Terminal」授权，请允许"; fi
+if osa "$OSA_T" osascript -e 'application "Terminal" is running' 2>/dev/null | grep -q true; then
+  if osa "$OSA_T" osascript -e 'tell application "Terminal" to get name' >/dev/null 2>&1; then ok "可通过 AppleScript 控制 Terminal.app（自动化授权已通过）"; else warn "无法控制 Terminal.app或调用超时：若已拒绝授权，到 系统设置→隐私与安全性→自动化 开启；无图形界面的环境（CI/SSH）超时属正常"; fi
+else warn "Terminal.app 未运行或 osascript 超时，跳过自动化授权预检；首次开窗时 macOS 会弹「<运行主控的应用> 想要控制 Terminal」授权，请允许"; fi
 command -v python3 >/dev/null 2>&1 && ok "python3 存在（install/uninstall 合并 settings 用）" || warn "未找到 python3（仅影响 install/uninstall 的 hook 自动合并；运行本身不需要）"
 
 echo "== Claude Code =="
@@ -43,6 +61,7 @@ echo "  plan-reviewer: model=${ATC_MODEL_PLAN_REVIEWER:-${MD:-claude-fable-5}} e
 echo "  executor: model=${ATC_MODEL_EXECUTOR:-${MD:-claude-opus-5}} effort=${ATC_EFFORT_EXECUTOR:-${ED:-high}}"
 echo "  verifier: model=${ATC_MODEL_VERIFIER:-${MD:-claude-fable-5}} effort=${ATC_EFFORT_VERIFIER:-${ED:-xhigh}}"
 echo "  权限模式: ${ATC_PERMISSION_MODE:-bypassPermissions}"
+echo "  osascript 超时: ${ATC_OSA_TIMEOUT:-8} 秒（无图形界面环境下防止无限阻塞）"
 warn "请确认你的账号能使用上述模型；无 Fable/Opus 权限时可 export ATC_MODEL_DEFAULT=sonnet（会作用于全部角色，含 executor）"
 
 echo "== 项目目录: $PROJ =="

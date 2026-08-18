@@ -1,8 +1,13 @@
 #!/bin/bash
 # tests/run.sh — 不依赖真实 Claude 会话与开窗的自动化测试
 # 覆盖：bash 语法、SKILL frontmatter、DRY_RUN 冒烟（默认/覆盖/非法值/后缀）、陈旧记录判定、
-#       hook 三场景、install/uninstall 幂等与精确移除（隔离 CLAUDE_HOME）、个人信息残留检查
+#       hook 三场景、install/uninstall 幂等与精确移除（隔离 CLAUDE_HOME）、个人信息残留检查、
+#       osascript 阻塞回归、文档完整性与配置项同步
+# 不覆盖（按设计，需真实 GUI 与 Claude 会话）：开窗布局、READY 握手、角色状态机流转、
+#       上下文压缩恢复的真实行为 —— 这些走 docs/manual-e2e-checklist.md 人工回归。
 set -uo pipefail
+# 无图形界面环境下 osascript 会阻塞；测试里把超时压到 1 秒，避免每次调用白等默认的 8 秒
+export ATC_OSA_TIMEOUT=1
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL="$ROOT/skills/agent-team-cli"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -78,20 +83,39 @@ printf 'main=0\nplanner=99999991\nexecutor=99999992\n' > "$P/.claude/agent-team-
 OUT="$(DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main demo 2>&1)"
 check "窗口均不存在 → 自动清理并继续" "echo \"\$OUT\" | grep -q '陈旧' && echo \"\$OUT\" | grep -q 'DRY_RUN'"
 
+echo "== 4b. osascript 阻塞时不挂死（headless/CI 回归）=="
+# 回归 2026-08-18 首次 CI 事故：屏幕几何查询位于 DRY_RUN 判断之前，headless 环境下
+# osascript 无限阻塞（不是失败），原有 `|| true` 兜底永远走不到，CI 卡死 21 分钟。
+FAKEBIN="$TMP/fakebin"; mkdir -p "$FAKEBIN"
+printf '#!/bin/bash\nsleep 120\n' > "$FAKEBIN/osascript"; chmod +x "$FAKEBIN/osascript"
+R="$TMP/proj-hang"; mkdir -p "$R"
+T0=$(date +%s)
+PATH="$FAKEBIN:$PATH" DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$R" main demo >"$TMP/hang.out" 2>&1
+HRC=$?; T1=$(date +%s)
+check "osascript 永久阻塞时 launch-team.sh 仍正常退出" "[ $HRC -eq 0 ]"
+check "且在 30 秒内结束（实测 $((T1-T0)) 秒）" "[ $((T1-T0)) -lt 30 ]"
+check "打印超时警告并改用兜底屏幕尺寸" "grep -q '兜底值' '$TMP/hang.out'"
+T2=$(date +%s)
+PATH="$FAKEBIN:$PATH" bash "$SKILL/scripts/doctor.sh" "$R" >/dev/null 2>&1
+T3=$(date +%s)
+check "doctor.sh 同环境下也在 30 秒内结束（实测 $((T3-T2)) 秒）" "[ $((T3-T2)) -lt 30 ]"
+
 echo "== 5. session-recover.sh 三场景 =="
 H="$SKILL/scripts/session-recover.sh"
-mkdir -p "$TMP/empty"; cd "$TMP/empty"
+mkdir -p "$TMP/empty"; cd "$TMP/empty" || exit 1
 check "无任务目录 → 静默" "[ -z \"\$(echo '{\"source\":\"startup\"}' | bash '$H')\" ]"
-mkdir -p "$TMP/done/runs/x" && printf 'skill: ~/.claude/skills/agent-team-cli/SKILL.md\nmain会话名: main\n阶段: [P5] 完成\n' > "$TMP/done/runs/x/state.md"; cd "$TMP/done"
+mkdir -p "$TMP/done/runs/x" && printf 'skill: ~/.claude/skills/agent-team-cli/SKILL.md\nmain会话名: main\n阶段: [P5] 完成\n' > "$TMP/done/runs/x/state.md"; cd "$TMP/done" || exit 1
 check "已完成任务 → 静默" "[ -z \"\$(echo '{\"source\":\"compact\"}' | bash '$H')\" ]"
-mkdir -p "$TMP/aband/runs/z" && printf 'skill: ~/.claude/skills/agent-team-cli/SKILL.md\n阶段: [P5] 完成（已放弃）\n' > "$TMP/aband/runs/z/state.md"; cd "$TMP/aband"
+mkdir -p "$TMP/aband/runs/z" && printf 'skill: ~/.claude/skills/agent-team-cli/SKILL.md\n阶段: [P5] 完成（已放弃）\n' > "$TMP/aband/runs/z/state.md"; cd "$TMP/aband" || exit 1
 check "已放弃任务 → 静默" "[ -z \"\$(echo '{\"source\":\"compact\"}' | bash '$H')\" ]"
-mkdir -p "$TMP/live/runs/y" && printf 'skill: ~/.claude/skills/agent-team-cli/SKILL.md\nmain会话名: main\n阶段: [2] 执行验证环\n正在等待: verifier\n' > "$TMP/live/runs/y/state.md"; cd "$TMP/live"
+mkdir -p "$TMP/live/runs/y" && printf 'skill: ~/.claude/skills/agent-team-cli/SKILL.md\nmain会话名: main\n阶段: [2] 执行验证环\n正在等待: verifier\n' > "$TMP/live/runs/y/state.md"; cd "$TMP/live" || exit 1
+# shellcheck disable=SC2034  # 在 check 的 eval 字符串中使用，shellcheck 无法看穿 eval
 OUT="$(echo '{"source":"compact"}' | bash "$H")"
 check "进行中任务 → 注入且识别 compact" "echo \"\$OUT\" | grep -q 'agent-team-cli-recovery' && echo \"\$OUT\" | grep -q '上下文刚被压缩' && echo \"\$OUT\" | grep -q '正在等待: verifier'"
+# shellcheck disable=SC2034  # 在 check 的 eval 字符串中使用，shellcheck 无法看穿 eval
 OUT2="$(bash "$H" </dev/null)"
 check "无 stdin 也不报错" "echo \"\$OUT2\" | grep -q 'agent-team-cli-recovery'"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 
 echo "== 6. install / uninstall（隔离 CLAUDE_HOME）=="
 FAKE="$TMP/home"; mkdir -p "$FAKE"
@@ -127,6 +151,28 @@ leak_scan() { git -C "$ROOT" ls-files -z | xargs -0 grep -n "$LEAK_PAT"; }
 check "已入库文件无个人路径/会话名残留" "[ -z \"\$(leak_scan)\" ]"
 check "runs/ 与运行时目录未入库" "! git -C '$ROOT' ls-files 2>/dev/null | grep -qE '^runs/|\.claude/agent-team-cli/'"
 
+echo "== 7b. 文档完整性 / 配置项同步 =="
+# 历史 bug：examples 断链导致新人照 README 走不通。链接是分发路径的一部分，必须自动把关。
+BROKEN=""
+while IFS= read -r f; do
+  while IFS= read -r link; do
+    case "$link" in http*|mailto:*|\#*) continue ;; esac
+    tgt="$ROOT/$(dirname "$f")/${link%%\#*}"
+    [ -e "$tgt" ] || BROKEN="$BROKEN$f -> $link; "
+  done <<< "$(grep -oE '\]\([^)]+\)' "$ROOT/$f" 2>/dev/null | sed 's/^](//;s/)$//')"
+done <<< "$(git -C "$ROOT" ls-files '*.md' 2>/dev/null)"
+check "Markdown 内部链接均可解析${BROKEN:+（断链: $BROKEN）}" "[ -z '$BROKEN' ]"
+
+# CLAUDE.md 的人工约定「新增配置项须同步 README + doctor.sh」在此变成自动检查——
+# 靠人记的规矩会烂掉，靠测试的不会。
+MISSING=""
+for v in $(grep -oE 'ATC_[A-Z]+[A-Z_]*' "$SKILL/scripts/launch-team.sh" | sed 's/_$//' | sort -u); do
+  grep -q "$v" "$ROOT/README.md" 2>/dev/null || MISSING="$MISSING README缺:$v "
+  grep -q "$v" "$SKILL/scripts/doctor.sh" 2>/dev/null || MISSING="$MISSING doctor缺:$v "
+done
+check "所有 ATC_* 配置项已同步到 README 与 doctor.sh${MISSING:+（$MISSING）}" "[ -z '$MISSING' ]"
+
 echo
 echo "通过 $PASS，失败 $FAIL"
+echo "注: 本套测试不覆盖真实开窗/握手/状态机流转（需 GUI 与 Claude 会话），发版前请按 docs/manual-e2e-checklist.md 人工回归。"
 [ "$FAIL" = 0 ]

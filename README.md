@@ -1,5 +1,7 @@
 # claude-agent-team-cli
 
+[![ci](https://github.com/Pengyf04/claude-agent-team-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Pengyf04/claude-agent-team-cli/actions/workflows/ci.yml)
+
 **多窗口、多会话的 Claude Code Agent Team 编排框架。**
 一个主控会话（main）自动开 4 个终端窗口，启动 planner / plan-reviewer / executor / verifier 四个**独立 Claude Code 会话**，用 Claude Code 原生的跨会话消息驱动「规划 → 评审 → 执行 ⇄ 验证 → 终验」状态机；每个角色的工作过程在各自窗口里实时可见、可介入；所有需要人拍板的事项统一经主控与你沟通。
 
@@ -91,6 +93,7 @@ claude --name main              # 启动主控；模型/effort 按需自选
 | `ATC_EFFORT_DEFAULT` | 无 | 设置后覆盖全部角色的 effort（`low` / `medium` / `high` / `xhigh` / `max`；请确认所选模型支持该档） |
 | `ATC_EFFORT_PLANNER` 等 `ATC_EFFORT_<ROLE>` | 非 executor `xhigh`，executor `high` | 单角色覆盖 |
 | `ATC_PERMISSION_MODE` | `bypassPermissions` | 角色会话权限模式（`acceptEdits` / `auto` / `default` 等） |
+| `ATC_OSA_TIMEOUT` | `8` | 单次 `osascript` 调用的超时秒数。无图形界面的环境（CI、SSH 登录、锁屏）下 `osascript` 会无限阻塞而非报错，超时后改用兜底屏幕尺寸继续 |
 
 优先级：单角色变量 > `*_DEFAULT` > 内置默认。示例：`export ATC_MODEL_DEFAULT=sonnet ATC_EFFORT_DEFAULT=high` 让全部角色跑 Sonnet+high。
 

@@ -13,3 +13,7 @@
 - 团队令牌来源校验（launch 生成、主控每条消息携带、角色只认令牌）；角色回报只按主控名发一次；`restart-role.sh` 单角色重启；角色临时文件 mktemp 纪律；桌面版主控说明
 - SKILL 重入检查（主控重启后续跑不重复提问）、git init 前征得用户同意并拒绝危险目录、窗口 ID 按 tty 精确识别、主控不在 Terminal.app 时不移动已有窗口
 - 文档：README（macOS only 置顶）、architecture、design-decisions、troubleshooting、manual-e2e-checklist、HANDOFF；examples/pomodoro-cli 真实运行记录
+- 所有 `osascript` 调用经 `osa` 超时包装器（`ATC_OSA_TIMEOUT`，默认 8 秒）：headless 环境（CI runner / SSH / 锁屏 / 自动化授权未决）下 osascript 会无限阻塞而非报错，原有失败兜底永远走不到，会导致 `launch-team.sh` 与 `doctor.sh` 无提示卡死
+- 测试：新增 osascript 阻塞回归（伪造阻塞型 osascript 验证不挂死）、Markdown 内部链接完整性、`ATC_*` 配置项与 README/doctor.sh 的同步校验；shellcheck 扩展到覆盖 `tests/run.sh` 自身；泄漏扫描改为只查已入库文件；测试末尾声明未覆盖范围，避免绿灯被误读为全覆盖
+- CI：macOS 矩阵（macos-14 / macos-latest）、最小权限 `contents: read`、并发取消陈旧运行、`timeout-minutes` 上限、action 钉 commit SHA、`test` 汇总门禁作业（分支保护只需盯一个稳定检查名）
+- 新增 `release.yml`（打 tag 触发，测试通过才建 Release）、`dependabot.yml`、PR 模板（内嵌自检清单）、issue 模板

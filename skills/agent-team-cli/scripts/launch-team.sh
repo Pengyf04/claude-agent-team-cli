@@ -10,8 +10,29 @@
 #     ATC_MODEL_PLANNER / ATC_MODEL_PLAN_REVIEWER / ATC_MODEL_EXECUTOR / ATC_MODEL_VERIFIER  单角色覆盖（优先级最高）
 #     ATC_EFFORT_DEFAULT / ATC_EFFORT_<ROLE>   同上，作用于 effort
 #     ATC_PERMISSION_MODE          子会话权限模式（默认 bypassPermissions；可改 acceptEdits/auto 等，代价是循环可能停下等确认）
+#     ATC_OSA_TIMEOUT              单次 osascript 调用的超时秒数（默认 8）。无图形界面的环境（CI/SSH）下
+#                                  osascript 会无限阻塞，超时后使用兜底屏幕尺寸继续
 #     DRY_RUN=1                    只生成 runner 不开窗；POSITION_MAIN=0 不移动 main 窗口
 set -euo pipefail
+
+# ---------- 带超时的 osascript ----------
+# 无窗口服务器 / 自动化授权未决的环境（CI runner、SSH 登录、锁屏）里，osascript 不会报错
+# 而是无限阻塞，于是调用点的 `|| true` 兜底永远走不到。这里统一加硬超时：超时按失败返回，
+# 交给各调用点原有的兜底分支处理。用法：osa <秒> osascript ...
+osa() {
+  local secs="$1"; shift
+  local out pid watcher rc
+  out="$(mktemp)"
+  "$@" >"$out" 2>&1 &
+  pid=$!
+  { sleep "$secs"; kill -9 "$pid" 2>/dev/null; } >/dev/null 2>&1 &
+  watcher=$!
+  rc=0; wait "$pid" 2>/dev/null || rc=$?
+  kill -9 "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
+  cat "$out"; rm -f "$out"
+  return "$rc"
+}
 
 PROJ_ARG="${1:?用法: launch-team.sh <项目目录> [main会话名] [团队后缀]}"
 MAIN_NAME="${2:-main}"
@@ -36,7 +57,8 @@ if [ -f "$WINFILE" ]; then
     role="${pair%%=*}"; wid="${pair##*=}"
     [ "$role" = "main" ] && continue
     case "$wid" in ''|0|*[!0-9]*) continue ;; esac
-    if osascript -e "tell application \"Terminal\" to exists window id $wid" 2>/dev/null | grep -q true; then
+    # 超时＝无法确认存活 → 落到陈旧记录清理路径（正常 GUI 环境 5 秒绰绰有余）
+    if osa "${ATC_OSA_TIMEOUT:-8}" osascript -e "tell application \"Terminal\" to exists window id $wid" 2>/dev/null | grep -q true; then
       ALIVE="$ALIVE $role"
     fi
   done < "$WINFILE"
@@ -108,7 +130,7 @@ EOF
 done
 
 # ---------- 主屏(screens[0])可用区域（JXA；失败显式告警并用兜底值） ----------
-GEOM="$(osascript -l JavaScript -e '
+GEOM="$(osa "${ATC_OSA_TIMEOUT:-8}" osascript -l JavaScript -e '
 (function () {
   ObjC.import("AppKit");
   var s = $.NSScreen.screens.objectAtIndex(0), f = s.frame, v = s.visibleFrame;
@@ -119,7 +141,7 @@ GEOM="$(osascript -l JavaScript -e '
   return left + " " + topY + " " + right + " " + botY;
 })()' 2>&1 || true)"
 if ! [[ "$GEOM" =~ ^-?[0-9]+\ -?[0-9]+\ -?[0-9]+\ -?[0-9]+$ ]]; then
-  echo "警告: 获取屏幕尺寸失败（$GEOM），使用兜底值 0 25 1440 900。若为 macOS 自动化授权弹窗被拒，请在 系统设置→隐私与安全性→自动化 中允许。" >&2
+  echo "警告: 获取屏幕尺寸失败或超时（$GEOM），使用兜底值 0 25 1440 900。若为 macOS 自动化授权弹窗被拒，请在 系统设置→隐私与安全性→自动化 中允许；无图形界面的环境（CI/SSH）走超时属正常。" >&2
   GEOM="0 25 1440 900"
 fi
 read -r SL STOP SR SBOT <<< "$GEOM"

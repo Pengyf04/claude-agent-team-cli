@@ -1,16 +1,52 @@
 name: ci
+
 on:
   push:
     branches: [main]
   pull_request:
+
+# 最小权限：CI 只读代码，不需要任何写权限
+permissions:
+  contents: read
+
+# 同分支的新推送取消仍在跑的旧运行
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
-    runs-on: macos-latest
+  checks:
+    # 项目仅支持 macOS（开窗依赖 Terminal.app + AppleScript），只在 macOS 上验证
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # 全套测试本地约 30 秒。设上限是为了让"挂死"在几分钟内失败，
+    # 而不是吃满 GitHub 默认的 360 分钟——2026-08-18 首次 CI 就因此空转了 21 分钟。
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - name: install shellcheck
-        run: brew install shellcheck
-      - name: shellcheck
-        run: shellcheck -S warning install.sh uninstall.sh skills/agent-team-cli/scripts/*.sh
-      - name: run tests
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 准备 shellcheck
+        # runner 预装则跳过；brew install 很慢，不要无条件执行
+        run: command -v shellcheck >/dev/null || brew install shellcheck
+      - name: 静态检查（含 tests/run.sh 自身）
+        run: shellcheck -S warning install.sh uninstall.sh tests/run.sh skills/agent-team-cli/scripts/*.sh
+      - name: 自动化测试
         run: bash tests/run.sh
+
+  test:
+    # 汇总门禁。分支保护只需盯住 "test" 这一个检查名，
+    # 以后矩阵增减 OS 都不会让保护规则失效。
+    needs: checks
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 汇总矩阵结果
+        run: |
+          if [ "${{ needs.checks.result }}" != "success" ]; then
+            echo "矩阵作业未全部通过：${{ needs.checks.result }}"
+            exit 1
+          fi
+          echo "全部矩阵作业通过"

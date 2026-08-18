@@ -21,6 +21,21 @@ Claude Code 的多会话 Agent Team 编排 skill：主控开 4 个 Terminal 窗�
 - 实测后新增/改动并已回归的：模型/权限参数化（DRY_RUN）、去 python3 的 hook 脚本（三场景）、install/uninstall（隔离 HOME 幂等/精确移除）、doctor、TOFU 双通道来源校验（改措辞）、slug 后缀命名（DRY_RUN）、陈旧记录自动清理（真实窗口场景）。
 - 发布前做过一次"陌生人首次安装"视角的对抗性审查并修复（CI 缺 claude、示例断链、备份目录被当 skill、首次运行需重启主控的流程、settings 合并无脚本、git init 护栏、窗口 ID 竞态、放弃任务后 hook 持续注入、来源校验协议不一致 等）。
 
+## 仓库与门禁（2026-08-18 起）
+- 公开仓库：https://github.com/Pengyf04/claude-agent-team-cli （MIT）
+- `main` 受分支保护：必须走 PR；必需检查 `test`（CI 汇总作业）；禁 force push、禁删分支、要求线性历史。
+  「对管理员强制」故意设为关闭——单人维护者不能被自己锁在门外，但 force push / 删分支的禁令对所有人生效。
+- 发版：打 tag `vX.Y.Z` 并推送即可，`release.yml` 会重跑测试并自动建 Release。别手工 `gh release create`（绕过门禁）。
+
+## 曾踩过的坑（别再踩）· CI 篇
+- **headless 环境下 `osascript` 会无限阻塞，不会报错**。首次 CI 就因此卡死 21 分钟：屏幕几何查询位于
+  DRY_RUN 判断之前，`|| true` 兜底只防失败、防不住挂起。现已统一走 `osa` 超时包装器，
+  `tests/run.sh` 有伪造阻塞型 osascript 的回归用例守住。新增任何 osascript 调用都必须经 `osa`。
+- workflow 不写 `timeout-minutes` 时默认上限是 **360 分钟**，挂死会一直烧。
+- 用 matrix 会把检查名变成 `test (macos-14)` 这种形式，**直接让分支保护的必需检查失效**；
+  所以保留一个名为 `test` 的汇总作业专门给分支保护盯。
+- `brew install shellcheck` 在 macOS runner 上很慢，先 `command -v` 探测再决定装。
+
 ## 已知限制 / Roadmap
 macOS only；仅 Claude 系模型；Fast 需手动；中文 prompt。Roadmap：英文包、插件分发、Linux/WSL2 后端、executor 调 codex exec。
 

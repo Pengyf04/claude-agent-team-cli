@@ -24,7 +24,7 @@ if [ -n "$OLD" ] && [ "$OLD" != "0" ] && osascript -e "tell application \"Termin
   if [ -n "$TTY" ]; then
     T="${TTY#/dev/}"
     pkill -t "$T" 2>/dev/null || true
-    for _ in 1 2 3 4 5 6 7 8; do pgrep -t "$T" >/dev/null 2>&1 || break; sleep 1; done
+    for _ in $(seq 1 15); do pgrep -t "$T" >/dev/null 2>&1 || break; sleep 1; done   # claude 优雅退出需数秒
     pgrep -t "$T" >/dev/null 2>&1 && { pkill -9 -t "$T" 2>/dev/null || true; sleep 2; }
   fi
   osascript -e "tell application \"Terminal\" to close window id $OLD" 2>/dev/null || true

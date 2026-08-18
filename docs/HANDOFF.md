@@ -16,7 +16,8 @@ Claude Code 的多会话 Agent Team 编排 skill：主控开 4 个 Terminal 窗�
 3. 更新 `CHANGELOG.md`；语义化版本；发版打 tag + GitHub Release
 
 ## 验证状态（截至 v0.1.0）
-- 端到端实测两次通过（番茄钟任务，见 examples/；发布前又以 wordcount 小任务回归了参数化/tty 定位/ensure-inbound/slug 后缀/单角色重启，并由此引入令牌协议）：开窗、READY 握手、规划环 2 轮、执行验证环 1 轮、终验、两个卡点、看门狗唤醒、闲置 2 天唤醒。
+- 端到端实测两次通过（番茄钟任务，见 examples/；发布前又以 wordcount 小任务回归了参数化/tty 定位/ensure-inbound/slug 后缀/单角色重启，并由此引入令牌协议；令牌协议随后做了单角色活体验证：无令牌拒绝、有令牌执行、回报直达）
+- claude 会话优雅退出需 3–10 秒：shutdown/restart 脚本先 TERM 再等最多 15 秒再 KILL，然后才 close 窗口，否则 Terminal 会弹终止确认框：开窗、READY 握手、规划环 2 轮、执行验证环 1 轮、终验、两个卡点、看门狗唤醒、闲置 2 天唤醒。
 - 实测后新增/改动并已回归的：模型/权限参数化（DRY_RUN）、去 python3 的 hook 脚本（三场景）、install/uninstall（隔离 HOME 幂等/精确移除）、doctor、TOFU 双通道来源校验（改措辞）、slug 后缀命名（DRY_RUN）、陈旧记录自动清理（真实窗口场景）。
 - 发布前做过一次"陌生人首次安装"视角的对抗性审查并修复（CI 缺 claude、示例断链、备份目录被当 skill、首次运行需重启主控的流程、settings 合并无脚本、git init 护栏、窗口 ID 竞态、放弃任务后 hook 持续注入、来源校验协议不一致 等）。
 

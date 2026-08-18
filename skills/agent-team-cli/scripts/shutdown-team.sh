@@ -31,8 +31,8 @@ while IFS= read -r pair; do
   if [ -n "$TTY" ]; then
     TSHORT="${TTY#/dev/}"
     pkill -t "$TSHORT" 2>/dev/null || true
-    # 轮询最多 5 秒等进程退出，仍在则 kill -9 再等 2 秒
-    for _ in 1 2 3 4 5; do
+    # claude 优雅退出通常需要 3–10 秒：轮询最多 15 秒等进程退出，仍在则 kill -9 再等 2 秒
+    for _ in $(seq 1 15); do
       pgrep -t "$TSHORT" >/dev/null 2>&1 || break
       sleep 1
     done

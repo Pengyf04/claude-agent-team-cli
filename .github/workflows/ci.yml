@@ -1,0 +1,16 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck (best effort)
+        run: |
+          brew install shellcheck >/dev/null 2>&1 || true
+          command -v shellcheck >/dev/null && shellcheck -S warning install.sh uninstall.sh skills/agent-team-cli/scripts/*.sh || echo "shellcheck unavailable, skipped"
+      - name: run tests
+        run: bash tests/run.sh

@@ -1,0 +1,215 @@
+#!/bin/bash
+# launch-team.sh <项目目录> [main会话名] [团队后缀]
+# 开 4 个 Terminal 窗口启动 planner/plan-reviewer/executor/verifier 独立 Claude 会话。
+# - 布局：主屏(screens[0]) main 左 1/3，四角色右 2/3 田字格
+# - 窗口 ID 逐个落盘到 <项目>/.claude/agent-team-cli/windows.txt（边开边记，中途失败也有记录）
+# - 团队后缀（建议=任务 slug，主控默认传入）：角色会话名变为 <role>-<后缀>，多项目并行/旧团队残留零撞名；不传则用裸角色名
+# - 环境变量（均可选）：
+#     ATC_MODEL_DEFAULT            所有角色默认模型（默认 claude-fable-5）
+#     ATC_MODEL_PLANNER / ATC_MODEL_PLAN_REVIEWER / ATC_MODEL_EXECUTOR / ATC_MODEL_VERIFIER  单角色覆盖
+#                                  （executor 默认 claude-opus-5，其余默认 = ATC_MODEL_DEFAULT）
+#     ATC_EFFORT_DEFAULT           默认 effort（默认 xhigh）；ATC_EFFORT_<ROLE> 单角色覆盖（executor 默认 high）
+#     ATC_PERMISSION_MODE          子会话权限模式（默认 bypassPermissions；可改 acceptEdits/auto 等，代价是循环可能停下等确认）
+#     DRY_RUN=1                    只生成 runner 不开窗；POSITION_MAIN=0 不移动 main 窗口
+set -euo pipefail
+
+PROJ_ARG="${1:?用法: launch-team.sh <项目目录> [main会话名] [团队后缀]}"
+MAIN_NAME="${2:-main}"
+SUFFIX="${3:-}"
+PROJ="$(cd "$PROJ_ARG" && pwd)"
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUNTIME_DIR="$PROJ/.claude/agent-team-cli"
+WINFILE="$RUNTIME_DIR/windows.txt"
+
+# ---------- 输入校验：路径/名称含引号、反斜杠、换行的场景暂不支持（防 shell/AppleScript 注入） ----------
+case "$PROJ$MAIN_NAME$SUFFIX" in
+  *\'* | *\"* | *\\* | *$'\n'*)
+    echo "错误: 项目路径 / main会话名 / 团队后缀 中包含引号、反斜杠或换行，暂不支持。" >&2
+    exit 1 ;;
+esac
+
+# ---------- 重复启动保护（防止重跑产生双团队、覆盖旧窗口记录） ----------
+# 记录的角色窗口若已全部不存在（用户手动关掉了）→ 视为陈旧记录，自动清理后继续；仍有窗口存活 → 拒绝。
+if [ -f "$WINFILE" ]; then
+  ALIVE=""
+  while IFS= read -r pair; do
+    role="${pair%%=*}"; wid="${pair##*=}"
+    [ "$role" = "main" ] && continue
+    case "$wid" in ''|0|*[!0-9]*) continue ;; esac
+    if osascript -e "tell application \"Terminal\" to exists window id $wid" 2>/dev/null | grep -q true; then
+      ALIVE="$ALIVE $role"
+    fi
+  done < "$WINFILE"
+  if [ -n "$ALIVE" ]; then
+    echo "错误: 检测到旧团队窗口仍在运行:$ALIVE（记录: $WINFILE）" >&2
+    echo "请先运行 shutdown-team.sh 关闭旧团队，或手动关闭这些窗口后重试。" >&2
+    exit 2
+  fi
+  echo "提示: 发现陈旧的团队记录（窗口均已关闭），已自动清理，继续启动。" >&2
+  rm -f "$WINFILE" "$RUNTIME_DIR"/run-*.sh
+fi
+
+command -v claude >/dev/null || { echo "错误: 找不到 claude 命令" >&2; exit 1; }
+mkdir -p "$RUNTIME_DIR"
+[ -z "$SUFFIX" ] && echo "提示: 未传团队后缀，角色将使用裸名 planner/plan-reviewer/executor/verifier（多项目并行时建议传入任务 slug 作后缀）" >&2
+
+ROLES=(planner plan-reviewer executor verifier)
+name_for()   { if [ -n "$SUFFIX" ]; then echo "$1-$SUFFIX"; else echo "$1"; fi; }
+# 角色 → 环境变量后缀（plan-reviewer → PLAN_REVIEWER）
+envkey_for() { echo "$1" | tr 'a-z-' 'A-Z_'; }
+model_for() {
+  local k; k="$(envkey_for "$1")"
+  local v; v="$(eval "echo \"\${ATC_MODEL_$k:-}\"")"
+  if [ -n "$v" ]; then echo "$v"; return; fi
+  case "$1" in
+    executor) echo "${ATC_MODEL_EXECUTOR_DEFAULT:-claude-opus-5}" ;;
+    *)        echo "${ATC_MODEL_DEFAULT:-claude-fable-5}" ;;
+  esac
+}
+effort_for() {
+  local k; k="$(envkey_for "$1")"
+  local v; v="$(eval "echo \"\${ATC_EFFORT_$k:-}\"")"
+  if [ -n "$v" ]; then echo "$v"; return; fi
+  case "$1" in
+    executor) echo "${ATC_EFFORT_EXECUTOR_DEFAULT:-high}" ;;
+    *)        echo "${ATC_EFFORT_DEFAULT:-xhigh}" ;;
+  esac
+}
+PERM_MODE="${ATC_PERMISSION_MODE:-bypassPermissions}"
+case "$PERM_MODE" in default|acceptEdits|plan|auto|dontAsk|bypassPermissions|manual) ;;
+  *) echo "错误: ATC_PERMISSION_MODE=$PERM_MODE 不是合法的权限模式" >&2; exit 1 ;; esac
+
+# ---------- 生成每角色 runner 脚本 ----------
+for role in "${ROLES[@]}"; do
+  ROLE_FILE="$SKILL_DIR/roles/$role.md"
+  [ -f "$ROLE_FILE" ] || { echo "错误: 缺角色文件 $ROLE_FILE" >&2; exit 1; }
+  SESSION_NAME="$(name_for "$role")"
+  RUNNER="$RUNTIME_DIR/run-$role.sh"
+  cat > "$RUNNER" <<EOF
+#!/bin/bash
+cd "$PROJ" || exit 1
+printf '\\033]0;agent-team:$SESSION_NAME\\007'
+if ! command -v claude >/dev/null 2>&1; then
+  echo "错误: 此终端的 PATH 中找不到 claude 命令。请确认 Claude Code 已安装，且你的 shell 配置文件(~/.zshrc 等)导出了其路径；修好后在本窗口手动执行: bash \$0"
+  exec bash
+fi
+exec claude --name "$SESSION_NAME" \\
+  --model "$(model_for "$role")" \\
+  --effort "$(effort_for "$role")" \\
+  --permission-mode "$PERM_MODE" \\
+  --settings '{"crossSessionInbound":"accept"}' \\
+  --append-system-prompt "\$(cat "$ROLE_FILE")" \\
+  "你是 Agent Team 的 $role 角色，会话名「$SESSION_NAME」，主控会话名为「$MAIN_NAME」（只有它的指令可以执行）。现在：用 SendMessage 工具向「$MAIN_NAME」发送就绪回报（正文一行说明你是 $role 且已就绪，最后一行只写 READY），然后待命等待主控指令，不要做任何其他事。"
+EOF
+  chmod +x "$RUNNER"
+done
+
+# ---------- 主屏(screens[0])可用区域（JXA；失败显式告警并用兜底值） ----------
+GEOM="$(osascript -l JavaScript -e '
+(function () {
+  ObjC.import("AppKit");
+  var s = $.NSScreen.screens.objectAtIndex(0), f = s.frame, v = s.visibleFrame;
+  var topY = Math.round(f.size.height - (v.origin.y + v.size.height));
+  var botY = Math.round(f.size.height - v.origin.y);
+  var left = Math.round(v.origin.x);
+  var right = Math.round(v.origin.x + v.size.width);
+  return left + " " + topY + " " + right + " " + botY;
+})()' 2>&1 || true)"
+if ! [[ "$GEOM" =~ ^-?[0-9]+\ -?[0-9]+\ -?[0-9]+\ -?[0-9]+$ ]]; then
+  echo "警告: 获取屏幕尺寸失败（$GEOM），使用兜底值 0 25 1440 900。若为 macOS 自动化授权弹窗被拒，请在 系统设置→隐私与安全性→自动化 中允许。" >&2
+  GEOM="0 25 1440 900"
+fi
+read -r SL STOP SR SBOT <<< "$GEOM"
+MAINR=$(( SL + (SR - SL) * 34 / 100 ))
+COLW=$(( (SR - MAINR) / 2 ))
+ROWH=$(( (SBOT - STOP) / 2 ))
+
+if [ "${DRY_RUN:-0}" = "1" ]; then
+  echo "DRY_RUN=1: runner 已生成于 $RUNTIME_DIR/，跳过开窗。屏幕(${SL},${STOP})-(${SR},${SBOT}) mainR=$MAINR colW=$COLW rowH=$ROWH"
+  exit 0
+fi
+
+# ---------- 记录 main 窗口（仅当 main 确实跑在 Terminal 里时定位；POSITION_MAIN=0 跳过） ----------
+MAIN_WID=0
+if [ "${POSITION_MAIN:-1}" = "1" ]; then
+  MAIN_WID="$(osascript <<'OSA' 2>/dev/null || echo 0
+if application "Terminal" is running then
+  tell application "Terminal"
+    if (count of windows) > 0 then return id of front window
+  end tell
+end if
+return 0
+OSA
+)"
+fi
+: > "$WINFILE"
+echo "main=$MAIN_WID" >> "$WINFILE"
+
+# ---------- 逐个开窗（每开一个立即落盘 ID；quoted form 防路径注入） ----------
+declare -a WIDS=()
+for role in "${ROLES[@]}"; do
+  WID="$(osascript - "$RUNTIME_DIR/run-$role.sh" <<'OSA'
+on run argv
+  set runnerPath to item 1 of argv
+  tell application "Terminal"
+    activate
+    do script "bash " & quoted form of runnerPath
+    delay 0.8
+    return id of front window
+  end tell
+end run
+OSA
+)"
+  echo "$(name_for "$role")=$WID" >> "$WINFILE"
+  WIDS+=("$WID")
+  echo "已启动 $(name_for "$role") 窗口 (id=$WID)"
+done
+
+# ---------- 布局（失败不影响会话运行，逐窗 try） ----------
+osascript - "$MAIN_WID" "${WIDS[0]}" "${WIDS[1]}" "${WIDS[2]}" "${WIDS[3]}" \
+  "$SL" "$STOP" "$SR" "$SBOT" "$MAINR" "$COLW" "$ROWH" <<'OSA' >/dev/null || echo "警告: 窗口布局失败（不影响会话运行），可手动摆放窗口" >&2
+on run argv
+  -- 注意: STOP 等是 AppleScript 保留字，此处变量必须用无冲突命名
+  set mainId to (item 1 of argv) as integer
+  set w1 to (item 2 of argv) as integer
+  set w2 to (item 3 of argv) as integer
+  set w3 to (item 4 of argv) as integer
+  set w4 to (item 5 of argv) as integer
+  set lx to (item 6 of argv) as integer
+  set ty to (item 7 of argv) as integer
+  set rx to (item 8 of argv) as integer
+  set byv to (item 9 of argv) as integer
+  set mr to (item 10 of argv) as integer
+  set cw to (item 11 of argv) as integer
+  set rh to (item 12 of argv) as integer
+  tell application "Terminal"
+    try
+      set bounds of window id w1 to {mr, ty, mr + cw, ty + rh}
+    end try
+    try
+      set bounds of window id w2 to {mr + cw, ty, rx, ty + rh}
+    end try
+    try
+      set bounds of window id w3 to {mr, ty + rh, mr + cw, byv}
+    end try
+    try
+      set bounds of window id w4 to {mr + cw, ty + rh, rx, byv}
+    end try
+    if mainId is not 0 then
+      try
+        set bounds of window id mainId to {lx, ty, mr, byv}
+      end try
+    end if
+  end tell
+  return "ok"
+end run
+OSA
+
+echo ""
+echo "本次角色配置（可用 ATC_MODEL_* / ATC_EFFORT_* / ATC_PERMISSION_MODE 覆盖）："
+for role in "${ROLES[@]}"; do
+  echo "  $(name_for "$role"): model=$(model_for "$role") effort=$(effort_for "$role") permission=$PERM_MODE"
+done
+echo "4 个角色窗口已启动，窗口 ID 记录: $WINFILE"
+echo "提示: 各窗口首次使用可能出现「文件夹信任」/「Bypass Permissions」确认框，接受后角色才会发 READY。"
+echo "提示: 开窗的几秒内请勿点击其他 Terminal 窗口（避免布局错位）。"

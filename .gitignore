@@ -1,0 +1,10 @@
+plan.md
+.DS_Store
+*.bak
+*.bak-*
+__pycache__/
+.pytest_cache/
+# 运行时产物（用户项目内生成，不应出现在本仓库）
+.claude/agent-team-cli/
+.claude/settings.local.json
+runs/

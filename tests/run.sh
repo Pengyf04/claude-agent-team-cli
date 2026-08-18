@@ -121,7 +121,10 @@ fi
 
 echo "== 7. 仓库卫生 =="
 LEAK_PAT="$(printf '%s\\|%s\\|%s' 'pengyuan''feng' 'agent-''d2' '/tmp/cc-''socks')"
-check "无个人路径/会话名残留" "! grep -rn \"\$LEAK_PAT\" '$ROOT' --exclude-dir=.git --exclude=plan.md -q"
+# 只扫已入库文件：把关的是"发出去的内容"。扫目录树会被本地产物（worktree 的 .git 指针、
+# 临时文件等）误报，而那些东西根本不会被推送。
+leak_scan() { git -C "$ROOT" ls-files -z | xargs -0 grep -n "$LEAK_PAT"; }
+check "已入库文件无个人路径/会话名残留" "[ -z \"\$(leak_scan)\" ]"
 check "runs/ 与运行时目录未入库" "! git -C '$ROOT' ls-files 2>/dev/null | grep -qE '^runs/|\.claude/agent-team-cli/'"
 
 echo

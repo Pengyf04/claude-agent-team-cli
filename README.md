@@ -124,12 +124,47 @@ fast 模式没有启动 flag，且仅 Opus 系支持——需要时在 executor 
 - 桌面版会话**不读取项目级** `.claude/settings.local.json` 的 `crossSessionInbound`，且**不显示**跨会话消息的批准框（被扣的消息会静默过期）。因此桌面版主控要能收到 bypass 角色的消息，需满足其一：把该会话的权限模式设为 **bypassPermissions**（同类直送）；或在用户级 `~/.claude/settings.json` 写 `"crossSessionInbound": "accept"`（作用于本机所有会话）。
 - 桌面版没有 `/status`。
 
+## 收尾与异常清理
+
+`shutdown-team.sh` **不会自动执行**（它要结束进程、关闭窗口，自动触发太危险），也不会被角色调用。只有两种启动方式：让主控跑，或者你自己跑。
+
+| 情况 | 怎么做 |
+|---|---|
+| 任务正常完成 | P5 主控会问「是否关闭团队窗口」，回「是」即可，它自己跑 |
+| 中途放弃，主控还活着 | 直接跟主控说放弃，它会标记 `state.md` 并问你是否关窗 |
+| **主控卡死或已退出** | **只能手动执行**，见下 |
+| 你已手动关掉角色窗口 | 窗口没了但 `state.md` 可能仍是「进行中」，按下面第二条命令补标记 |
+
+### 手动执行
+
+**新开一个终端窗口**（不要在卡死的主控窗口里跑）：
+
+```bash
+bash ~/.claude/skills/agent-team-cli/scripts/shutdown-team.sh <你的项目绝对路径>
+```
+
+它会关掉 4 个角色窗口、结束其中的进程、清理 runner 脚本与团队令牌。**不会动主控窗口**——主控窗口由你自己关。
+
+如果这个任务是**中途放弃**而非完成，还要补一条标记，否则以后每次在该项目开会话都会被注入「存在进行中的任务」：
+
+```bash
+bash ~/.claude/skills/agent-team-cli/scripts/shutdown-team.sh <你的项目绝对路径> --abandon <slug>
+```
+
+`<slug>` 就是 `runs/` 下面的目录名；忘了叫什么就 `ls <你的项目>/runs/` 看一眼。
+
+> **不必记住这两步**。跑完第一条后，若检测到仍有「进行中」的任务，脚本会把第二条命令连同 slug 一起打印出来。即使两条都忘了，下次在该项目开会话时恢复 hook 会做活体校验，发现「任务标记进行中但无任何角色会话在册」时明确警告不要直接续跑，并附上处置命令。
+
+> 两条命令都需**非沙箱**执行（要结束进程、控制 Terminal.app）。在你自己的终端里直接跑即可。
+
+---
+
 ## 排障速查
 
 | 现象 | 原因 / 处理 |
 |---|---|
 | READY 收不齐 | 对应窗口多半卡在「文件夹信任 / Bypass 警告」确认框，去点一下；或 `/list-agents` 看会话是否在 |
-| 主控提示消息被 hold / 待批准 | 主控启动时还没加载 `crossSessionInbound: accept`——带同样的 `--name` 重启主控后重新调用 skill；桌面版主控见上一节 |
+| 主控提示消息被 hold / 待批准 | **主控自身权限模式不是 bypassPermissions**：普通/auto 模式的主控收不到 bypass 角色的消息。用 `claude --name <同样的名字> --permission-mode bypassPermissions` 重启主控后重新调用 skill。（项目级 `crossSessionInbound: accept` 在 auto 模式下实测**未生效**，别指望它兜底）|
 | 角色回 `BLOCKED: 消息未含团队令牌` | 主控漏带令牌行，补发带 `令牌: <值>` 的完整指令 |
 | 角色的回报一直收不到，但文件已产出 | 角色可能曾向 socket 地址发过消息（此后其消息会持续被扣）：`scripts/restart-role.sh <项目> <角色>` 重启该角色（非沙箱执行），主控按文件继续 |
 | 角色窗口弹"Dangerous rm … Do you want to proceed?" | 选 **No**；主控会纠正角色改用 `mktemp -d`。这是 Claude Code 的硬安全检查，bypass 也不跳过 |

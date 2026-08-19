@@ -55,4 +55,4 @@
 
 - `runs/<slug>/…`
 - `.claude/agent-team-cli/{windows.txt, run-*.sh}`（窗口记录与 runner，shutdown 或陈旧检测时清理）
-- `.claude/settings.local.json` 中的 `crossSessionInbound: accept`
+- `.claude/settings.local.json` 中的 `crossSessionInbound: accept`（⚠️ 实测在 auto 模式主控下未生效；真正决定能否收到 bypass 角色消息的是**主控自身权限模式**，见 [design-decisions](design-decisions.md) 第 6 条）

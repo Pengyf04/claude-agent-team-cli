@@ -24,6 +24,7 @@
 - `session-recover.sh` 增加团队活体校验：注入时报告窗口记录与在册角色会话；若任务标记进行中却无任何角色在册，明确警告不得直接续跑，并提醒核对 `state.md` 里记录的主控名是否已作废。校验只读文件与会话注册表，绝不调 `osascript`（该 hook 在任意项目启动时都会跑）
 - `shutdown-team.sh` 的 `osascript` 调用补上超时包装器（此前只有 launch-team.sh 与 doctor.sh 有）
 - **修复主控名为 `main` 时团队必然卡死在握手**：`main` 是 SendMessage 的保留收件人，角色按名字回报会被拦截且无任何绕过（ListAgents 给的 ref、系统建议的 ref、sessionId 均不可达）。`launch-team.sh` 现在在开窗前就拒绝该名字（大小写不敏感）并给出改名指引；默认主控名改为 `atc-main`；README / SKILL / 示例 / 回归清单同步；新增用例与文档 lint（防止脚本已拒绝而文档仍在教用户踩坑）
+- 更正文档中一处已被实测推翻的设计论证：`design-decisions` 第 6 条原称「写了项目级 `crossSessionInbound: accept` 即可让普通模式主控收到 bypass 角色的消息」，2026-08-19 E2E 实测该配置在位却未生效，消息仍被扣住。现如实记录实测结果、两个竞争假设、当前唯一验证过的配置（主控也跑 bypass）及其代价（主控安全等级被迫降低，这是待办而非已解决的设计）；`troubleshooting` / `architecture` / README 桌面版章节 / 人工回归清单同步更正
 - 修正 SKILL 中「权限类别扣留是桌面版专属」的错误表述：实际取决于主控自身权限模式，命令行 auto 模式主控同样被扣
 - 角色协议里作为“主控”简称的 `main` 改写为「主控」，避免角色误按字面名字发送
 - 修复 UTF-8 locale 下脚本报 `unbound variable` 而无法运行：中文提示中 `$VAR` 紧挨中文字符时，bash 会把中文的高位字节并入变量名（C locale 不触发，故本地长期未暴露）。全部 30 处改为 `${VAR}`，并加入 lint 检查与 `LC_ALL=en_US.UTF-8` 下的 CI 验证

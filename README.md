@@ -121,7 +121,7 @@ fast 模式没有启动 flag，且仅 Opus 系支持——需要时在 executor 
 
 主控可以是 Claude Code **桌面版**的一个会话（好处：对话记录完整保留）。已实测可用，但有三点区别：
 - 桌面版会话不能 `--name`，注册名由系统派生（形如 `agent-4f`）。主控会用 `cat ~/.claude/sessions/$PPID.json` 读出自己的注册名再开团队；角色识别主控靠令牌，不受"显示名≠注册名"影响。
-- 桌面版会话**不读取项目级** `.claude/settings.local.json` 的 `crossSessionInbound`，且**不显示**跨会话消息的批准框（被扣的消息会静默过期）。因此桌面版主控要能收到 bypass 角色的消息，需满足其一：把该会话的权限模式设为 **bypassPermissions**（同类直送）；或在用户级 `~/.claude/settings.json` 写 `"crossSessionInbound": "accept"`（作用于本机所有会话）。
+- 能否收到 bypass 角色的消息，取决于**主控自身的权限模式**——这一点不限桌面版，命令行 auto 模式主控实测同样被扣。把主控会话权限模式设为 **bypassPermissions** 即可（同类直送）。桌面版另有两点让问题更隐蔽：**不显示**跨会话消息的批准框（被扣的消息静默过期），且**不读取项目级** `.claude/settings.local.json`。⚠️ 项目级 `crossSessionInbound: accept` 在 auto 模式主控下**实测未生效**（根因未定位，见 [design-decisions](docs/design-decisions.md) 第 6 条），不要把它当作「主控可以不跑 bypass」的依据。
 - 桌面版没有 `/status`。
 
 ## 收尾与异常清理

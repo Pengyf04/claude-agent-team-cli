@@ -8,6 +8,7 @@
 
 ## P0–P3
 - [ ] `/agent-team-cli <小任务>` 被识别，主控进入目标对齐并索要验收标准
+- [ ] 主控自身权限模式为 `bypassPermissions`（否则角色消息会被扣，团队卡死）
 - [ ] P1：项目 `.claude/settings.local.json` 出现 `crossSessionInbound: accept`；`runs/<slug>/{task.md,state.md}` 生成
 - [ ] P2：4 个 Terminal 窗口弹出、田字格布局、标题 `agent-team:<role>-<slug>`；`.claude/agent-team-cli/windows.txt` 有 5 行
 - [ ] 各窗口模型/effort 与预设（或环境变量覆盖）一致

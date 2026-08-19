@@ -2,6 +2,23 @@
 
 本项目遵循语义化版本。
 
+## [Unreleased]
+### 修复
+- **项目级 `crossSessionInbound: accept` 是结构性空操作，已彻底移除相关逻辑**。该键的项目级来源（`localSettings`/`projectSettings`）只在取值比当前更严格时才被采纳，而 `accept` 是最宽松的一档（accept<hold<refuse），比较基准在无人设置时也是 `accept`，因此永远不满足「更严格」——写进 `.claude/settings.local.json` 从第一天起就没生效过。框架历次跑通靠的全是「双方权限模式同类」（主控恰好也在 bypass），不是这个配置。已通过读取实现 + 双组对照实验实证（除 `--settings` 外一切相同：无参数组被扣 `mode-mismatch`，带参数组直达）
+- 主控改用 `--settings '{"crossSessionInbound":"accept"}'` 启动（属 `flagSettings`，取到即用、只作用于本会话）。**主控不再需要跑 `bypassPermissions`**——此前为了让框架能用而要求主控跳过全部权限检查，是把问题转嫁成用户的安全等级降低
+- 角色 runner 一直就是用 `--settings` 传的，**角色侧从未受影响**
+
+### 变更
+- `ensure-inbound.sh` → **改名 `prepare-project.sh`**，只保留「把运行时产物写入 `.git/info/exclude`」这一个仍然有效的职责；删除 inbound 写入逻辑与昨日新增的 `--remove`（移除一个从未生效的键没有意义）
+- SKILL 删除 P1「消息通路配置」与 P5「问是否移除该键」两个步骤；P0 自检改为检查是否带了 `--settings`
+- `doctor.sh` 不再检查项目级该键是否存在（检查一个无效配置会给出虚假安全感），改为直接提示主控该带的启动参数
+- README / architecture / troubleshooting / manual-e2e-checklist / examples 同步更正
+- `design-decisions` 第 6 条用实证结论重写（含实现细节与对照实验数据）
+
+### 测试
+- 新增：`prepare-project.sh` 幂等性、不碰用户 settings、非 git 目录静默跳过、**脚本自身不得再含 inbound 写入逻辑**
+- 新增文档 lint：文档不得再引导用户执行已废弃的 `ensure-inbound.sh`（只查调用写法，保留 CHANGELOG 等处的叙述性提及）
+
 ## [0.1.0] - 2026-08-19
 ### 首个公开版本
 - `/agent-team-cli` skill：主控开 4 个 Terminal 窗口启动 planner / plan-reviewer / executor / verifier 独立会话，用 Claude Code 跨会话消息驱动「规划环 → 卡点A → 执行验证环 → 终验 → 卡点B」状态机；循环硬上限 5 / 8 / 2；两个人工卡点绝不自动通过

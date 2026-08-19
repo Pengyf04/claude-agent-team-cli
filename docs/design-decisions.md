@@ -22,15 +22,43 @@ CAO 是最接近的现成方案（supervisor/worker、tmux 会话、支持 Claud
 
 执行 ⇄ 验证多轮循环要全自动，角色不能停下等用户在 4 个窗口逐个批准。兜底选 git（框架强制项目为 git 仓库）而非沙箱，是因为简单、通用、可回滚。可用 `ATC_PERMISSION_MODE` 收紧。
 
-## 6. 为什么 `crossSessionInbound: accept` 写在项目级 `settings.local.json`
+## 6. 为什么 `crossSessionInbound: accept` 必须由启动参数传入
 
-Claude Code 默认规则：普通模式会话收到 bypass 会话的消息会**扣住等用户批准**（安全闸）；主控普通模式 + 角色 bypass 恰好双向被扣，全自动断掉。本框架据此把 `accept` 写在项目级（只影响本项目）且用 `settings.local.json`（不进 git，不把"无门禁收消息"发布给团队其他人）——**选项目级而非用户级这个判断仍然成立**。
+Claude Code 默认规则：一条跨会话消息能否直达，取决于收发双方的**权限模式类别**是否相同（`bypassPermissions` 属 bypass 类；`acceptEdits` / `auto` / `default` / `dontAsk` / `manual` 全属 prompting 类）。角色跑 bypass，主控若不是 bypass 就类别不匹配，消息被扣住等用户批准，全自动断掉。
 
-**但这条设计的前提已被实测推翻，必须如实记录。** 2026-08-19 的端到端回归中：主控为命令行会话、权限模式 auto、项目级 `crossSessionInbound: accept` 确实在位，角色消息**依然被扣住**，系统提示仍然是"请设置 crossSessionInbound 为 accept"。也就是说，运行时并不认为该配置生效。根因至今未定位，两个竞争假设是：(a) 该键在此版本/场景下根本不被读取；(b) 键被读取了，但"权限类别不匹配"这道闸优先级更高。
+显式设置 `crossSessionInbound: accept` 可以完全绕开这套「模式对等」判定——但**只有从对的来源写入才算数**。
 
-**当前唯一经过完整 E2E 验证的配置是：主控自身也跑 `bypassPermissions`。** README 与 SKILL 现在只教这一条路。
+### 项目级写入是结构性空操作
 
-**这是有代价的，不是一个已解决的设计。** 角色跑 bypass 有充分理由（多轮循环不能停下等批准，且有 git 兜底）；但主控是用户直接对话的会话，让它也跳过全部权限检查，等于把问题转嫁成用户的安全性降级。`accept` 这条设计的初衷正是让主控能待在更安全的模式里——这个目标目前没有达成。查清 (a)/(b) 并让主控能不跑 bypass，是明确的待办。
+该键的解析规则（实测自 2.1.235 实现）：
+
+- 先按 `policySettings` → `flagSettings` → `userSettings` 顺序取，**取到即用**
+- 再看 `localSettings` / `projectSettings`，但**只在取值比当前更严格时才采纳**（严格度 `accept=0 < hold=1 < refuse=2`）
+
+比较基准在无人设置时就是 `accept`(0)。项目级写 `accept` 需满足 `0 > 0` —— **永远为假**。所以写进 `.claude/settings.local.json` 的 `accept` 在任何配置组合下都不会生效；项目级只能用来收紧（写 `hold`/`refuse`），这与 Claude Code 自己的提示文案「a repo may only tighten」一致。
+
+**本框架 v0.1.0 及更早版本的 `ensure-inbound.sh` 正是这么写的，因而从第一天起就是空转。** 历次「跑通」靠的全是模式对等（主控恰好也在 bypass），不是这个配置。
+
+### 实证
+
+2026-08-19 用两个会话做了对照实验，除 `--settings` 外一切相同：
+
+| | 主控权限模式 | `--settings` | 结果 |
+|---|---|---|---|
+| A 组 | `acceptEdits` | 无 | **被扣**，原因 `mode-mismatch` |
+| B 组 | `acceptEdits` | 有 | **直达**，无扣留 |
+
+### 结论
+
+启动参数（`flagSettings`）是唯一既有效、作用域又只限本会话的途径：
+
+```bash
+claude --name <主控名> --settings '{"crossSessionInbound":"accept"}'
+```
+
+用户级 `~/.claude/settings.json` 也有效，但会放宽本机**所有**会话，过度。
+
+**角色 runner 一直就是用 `--settings` 传的，所以角色侧从未受影响**——错的只是给主控的那套文档与脚本。这样主控不必被迫跑 `bypassPermissions`，避免了「为了让框架能用而降低主控安全等级」这个真实代价。
 
 ## 7. 为什么消息只传信号、内容走文件
 

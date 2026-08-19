@@ -87,5 +87,4 @@ if [ -z "${ABANDON}" ]; then
     echo "      若只是中途重启角色、任务还要继续，则无需处理。"
   done
 fi
-echo "提示: 项目 .claude/settings.local.json 中的 crossSessionInbound=accept 仍然生效（本项目会话无门禁收取本机任意会话消息）。"
-echo "      若本项目不再跑团队，建议移除: ensure-inbound.sh \"${PROJ}\" --remove（只摘该键，保留文件其余内容）"
+echo "提示: 团队窗口与运行时产物已清理。"

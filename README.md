@@ -45,15 +45,15 @@ cd claude-agent-team-cli && ./install.sh
 
 ```bash
 cd /path/to/your/project        # 建议是 git 仓库；这个目录会成为项目根
-bash ~/.claude/skills/agent-team-cli/scripts/ensure-inbound.sh .   # 一次性：让本项目的会话能收到跨会话消息
-claude --name atc-main --permission-mode bypassPermissions   # 启动主控
+bash ~/.claude/skills/agent-team-cli/scripts/prepare-project.sh .   # 一次性：让运行时产物不污染 git 状态
+claude --name atc-main --settings '{"crossSessionInbound":"accept"}'   # 启动主控
 ```
-> **两个参数都别省**，它们各自解决一个会让团队卡死的问题：
+> **两个参数都别省**，它们各自挡住一个会让团队卡死的问题：
 >
 > - **`--name` 不能取 `main`**：`main` 是 Claude Code 中 SendMessage 的保留收件人（指“本会话的主对话”），主控若叫 `main`，角色回报会被系统拦截**且无任何绕过**（ListAgents 给的 ref、系统建议的 ref、sessionId 都不可达），团队必然卡死在握手。`launch-team.sh` 会在开窗前直接拒绝该名字。多项目并行时主控名还须互不相同，建议 `atc-main-<slug>`。
-> - **`--permission-mode bypassPermissions`**：角色会话跑在 bypass 模式，而普通/auto 模式的主控**收不到 bypass 会话的消息**（会被系统扣住等批准），团队同样会卡死。这是目前唯一经过完整端到端验证的配置。若你不想让主控也跑 bypass，需自行确认消息不被扣留——项目级 `crossSessionInbound: accept` 在 auto 模式下实测未生效，原因尚在排查。
+> - **`--settings '{"crossSessionInbound":"accept"}'`**：角色会话跑在 bypassPermissions；没有这个显式设置时，能否收到它们的消息取决于双方权限模式**是否同类**（bypass↔bypass 或 prompting↔prompting），主控只要不是 bypass 就会被扣住、团队卡死。带上它，显式值优先级最高，**主控用什么权限模式都不影响收消息**。
 >
-> 模型 / effort 按需自选，见[参数](#参数)。
+> 主控**不需要**跑 `bypassPermissions`。模型 / effort 按需自选，见[参数](#参数)。
 
 在主控会话里：
 ```
@@ -64,7 +64,7 @@ claude --name atc-main --permission-mode bypassPermissions   # 启动主控
 | 阶段 | 主控做什么 | 你做什么 |
 |---|---|---|
 | P0 目标对齐 | 分析任务，逐个问清疑点，确保有**可判定的验收标准** | 回答问题 / 给验收标准 |
-| P1 环境准备 | 检查 git（不是仓库会先征得你同意再 init）；确保项目 `.claude/settings.local.json` 有 `crossSessionInbound: accept`；建 `runs/<slug>/`（slug = 主控给本次任务起的短横线名） | 若你没提前做上面的第二行，主控会提示你重启一次主控再调用（会自动续跑，不重复提问） |
+| P1 环境准备 | 检查 git（不是仓库会先征得你同意再 init）；建 `runs/<slug>/`（slug = 主控给本次任务起的短横线名） | 若你没提前做上面的第二行，主控会提示你重启一次主控再调用（会自动续跑，不重复提问） |
 | P2 开窗启动 | 开 4 个 Terminal.app 窗口（主屏均分：主控左 1/3、四角色右 2/3 田字格），按预设模型/权限启动 4 个角色会话 | 在各**角色窗口内**点掉首次出现的「文件夹信任 / Bypass 警告」对话框 |
 | 🔴 P3 就绪确认 | 收齐 4 个 READY 后提醒你核对各窗口配置 | 核对模型/effort（executor 想提速可手动 `/fast`）→ 在**主控窗口**回复同意（如"确认"） |
 | P4 状态机 | 规划环（planner ⇄ reviewer，≤5 轮）→ **🔴 卡点 A**（plan 定稿给你确认）→ 执行验证环（executor ⇄ verifier，≤8 轮）→ 终验（planner，回退 ≤2 次）→ **🔴 卡点 B**（交付物 + 验证结论 + 风险给你终审） | 两个卡点回复确认或提修改意见 |
@@ -111,7 +111,7 @@ fast 模式没有启动 flag，且仅 Opus 系支持——需要时在 executor 
 ## 安全说明
 
 - **为什么默认 bypassPermissions**：执行 ⇄ 验证的多轮循环要全自动跑完，角色会话不能停下来等你在 4 个窗口里逐个点批准。兜底是 **git**（框架要求项目为 git 仓库，P1 发现不是会先征得你同意再 `git init`）。想更保守：`ATC_PERMISSION_MODE=acceptEdits`。
-- **`crossSessionInbound: accept`**：主控会写入**项目级** `.claude/settings.local.json`（不进 git）。含义是"本项目里启动的会话收到本机其他会话的消息时直接送达，不弹批准框"——没有它，普通模式的主控收到 bypass 角色的消息会被扣住等你批准，全自动就断了。消息即便送达也仍被标记"来自其他会话"：不能替你批准权限、不能改配置、消息里的斜杠命令不会执行。项目不再跑团队时可移除该键（P5 会问你，也可自己执行 `bash ~/.claude/skills/agent-team-cli/scripts/ensure-inbound.sh <项目> --remove`——它只摘这一个键、保留文件里你自己的配置，仅当文件再无其他键时才整个删除）。**注意**：该键在 auto 模式主控下实测未生效，别把它当作「主控可以不用 bypass」的依据。
+- **`crossSessionInbound: accept`**：让本会话直接接收本机其他会话的消息，不弹批准框——角色 runner 与主控都靠它。**必须在启动时用 `--settings` 传入**（属 flagSettings，取到即用）；写进项目级 `.claude/settings.local.json` 是**空操作**：该键的项目级来源只在取值比当前更严格时才被采纳，而 `accept` 是最宽松的一档（accept<hold<refuse），永远不满足条件。消息即便送达也仍被标记“来自其他会话”：不能替你批准权限、不能改配置、消息里的斜杠命令不会执行。
 - **角色来源校验**：角色只执行正文含**团队令牌**的指令（令牌由 `launch-team.sh` 随机生成、写在项目 `.claude/agent-team-cli/token` 并注入角色启动指令）；不含令牌的消息一律不执行。令牌用于区分"本团队的主控"与本机其他会话的误发/伪装消息，不是密码学级防护。
 - **权限边界**：主控绝不指使角色去做主控自己被拒绝的操作（跨会话洗权限）。
 
@@ -121,7 +121,7 @@ fast 模式没有启动 flag，且仅 Opus 系支持——需要时在 executor 
 
 主控可以是 Claude Code **桌面版**的一个会话（好处：对话记录完整保留）。已实测可用，但有三点区别：
 - 桌面版会话不能 `--name`，注册名由系统派生（形如 `agent-4f`）。主控会用 `cat ~/.claude/sessions/$PPID.json` 读出自己的注册名再开团队；角色识别主控靠令牌，不受"显示名≠注册名"影响。
-- 能否收到 bypass 角色的消息，取决于**主控自身的权限模式**——这一点不限桌面版，命令行 auto 模式主控实测同样被扣。把主控会话权限模式设为 **bypassPermissions** 即可（同类直送）。桌面版另有两点让问题更隐蔽：**不显示**跨会话消息的批准框（被扣的消息静默过期），且**不读取项目级** `.claude/settings.local.json`。⚠️ 项目级 `crossSessionInbound: accept` 在 auto 模式主控下**实测未生效**（根因未定位，见 [design-decisions](docs/design-decisions.md) 第 6 条），不要把它当作「主控可以不跑 bypass」的依据。
+- 桌面版会话**不能用 `--settings` 启动**，拿不到显式 inbound 策略，只能靠模式对等：把主控会话权限模式设为 **bypassPermissions**（与角色同类即可直送）。桌面版还**不显示**跨会话消息的批准框（被扣的消息静默过期），问题更隐蔽。⚠️ 写进项目级 `.claude/settings.local.json` 是**空操作**（原因见 [design-decisions](docs/design-decisions.md) 第 6 条），不要把它当作兜底。
 - 桌面版没有 `/status`。
 
 ## 收尾与异常清理
@@ -164,7 +164,7 @@ bash ~/.claude/skills/agent-team-cli/scripts/shutdown-team.sh <你的项目绝�
 | 现象 | 原因 / 处理 |
 |---|---|
 | READY 收不齐 | 对应窗口多半卡在「文件夹信任 / Bypass 警告」确认框，去点一下；或 `/list-agents` 看会话是否在 |
-| 主控提示消息被 hold / 待批准 | **主控自身权限模式不是 bypassPermissions**：普通/auto 模式的主控收不到 bypass 角色的消息。用 `claude --name <同样的名字> --permission-mode bypassPermissions` 重启主控后重新调用 skill。（项目级 `crossSessionInbound: accept` 在 auto 模式下实测**未生效**，别指望它兜底）|
+| 主控提示消息被 hold / 待批准 | 主控启动时**没带** `--settings '{"crossSessionInbound":"accept"}'`。用 `claude --name <同样的名字> --settings '{"crossSessionInbound":"accept"}'` 重启主控后重新调用 skill。（写进项目级 `settings.local.json` 是**空操作**，别指望它兜底）|
 | 角色回 `BLOCKED: 消息未含团队令牌` | 主控漏带令牌行，补发带 `令牌: <值>` 的完整指令 |
 | 角色的回报一直收不到，但文件已产出 | 角色可能曾向 socket 地址发过消息（此后其消息会持续被扣）：`scripts/restart-role.sh <项目> <角色>` 重启该角色（非沙箱执行），主控按文件继续 |
 | 角色窗口弹"Dangerous rm … Do you want to proceed?" | 选 **No**；主控会纠正角色改用 `mktemp -d`。这是 Claude Code 的硬安全检查，bypass 也不跳过 |

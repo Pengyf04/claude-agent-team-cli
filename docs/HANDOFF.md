@@ -77,7 +77,7 @@ macOS only；仅 Claude 系模型；Fast 需手动；中文 prompt。Roadmap：�
 - AppleScript 里 `STOP` 等是保留字，布局脚本变量不能这么命名。
 - 桌面版主控的显示名 ≠ `--name`，且角色无法观测 READY 送达地址 → 来源校验用团队令牌（不靠名字/地址）。
 - 角色向裸 socket 地址发过一次消息后，其后续消息会持续被扣 → 协议：回报只按主控名发一次；坏了用 restart-role.sh。
-- 能否收到 bypass 角色的消息**取决于主控自身权限模式**（bypass 可收；auto/default 会被扣），与是不是桌面版无关——2026-08-19 实测命令行 auto 模式主控同样被扣，且项目级 `settings.local.json` 的 `crossSessionInbound: accept` 在位却未生效（根因未定位）。唯一经过完整 E2E 验证的配置是 **bypass 模式主控**。桌面版另有：不显示批准框、无 `/status`。
+- **主控必须带 `--settings '{"crossSessionInbound":"accept"}'` 启动**。没有显式设置时，能否收到角色消息取决于双方权限模式是否同类（bypass↔bypass / prompting↔prompting），主控只要不是 bypass 就会被扣。**写进项目级 `settings.local.json` 是结构性空操作**——该键的项目级来源只在收紧时才被采纳，而 accept 是最宽松档，永远不满足（根因已定位并实证，见 design-decisions #6）。原 `ensure-inbound.sh` 干的就是这件无效的事，已删除该逻辑并改名 `prepare-project.sh`（只保留写 .git/info/exclude）。桌面版主控不能用 `--settings`，只能靠让自己也跑 bypassPermissions。
 - **超时保护与 macOS 自动化授权弹窗存在张力**：首次开窗时 osascript 会合法阻塞等用户点“允许”，短超时会把它掐掉。所以 `launch-team.sh` 的开窗（heredoc）调用刻意不套 `osa`；`restart-role.sh` 的开窗调用则套了——用它时团队已在跑、授权早已给过。环境异常导致超时误伤时，可调大 `ATC_OSA_TIMEOUT`。
 - 主控跑 launch/shutdown/restart 脚本必须非沙箱（AppleScript + 杀进程）。
 - 角色对 runs/ 的通配符 rm 会触发 bypass 也拦不住的确认框 → 协议：mktemp -d。

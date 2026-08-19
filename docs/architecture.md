@@ -21,7 +21,7 @@
 | `scripts/launch-team.sh` | 生成每角色 runner 脚本（`claude --name/--model/--effort/--permission-mode/--settings/--append-system-prompt` + 待命指令）、AppleScript 开窗与布局、窗口 ID 逐个落盘、重复启动保护 |
 | `scripts/shutdown-team.sh` | 按记录先结束窗口内进程再关窗，清理 runner |
 | `scripts/session-recover.sh` | 用户级 SessionStart hook：项目内存在未完成 `runs/*/state.md` 时把内容与恢复指引注入会话（startup / resume / compact 触发）；其他情况静默 |
-| `scripts/ensure-inbound.sh` | 安全 merge `crossSessionInbound: accept` 进项目 `.claude/settings.local.json`（幂等）+ 运行时产物写入 `.git/info/exclude`；用户可在启动主控前手动跑，SKILL P1 也会调用 |
+| `scripts/prepare-project.sh` | 把运行时产物写入 `.git/info/exclude`（幂等，非 git 仓库静默跳过）；用户可在启动主控前手动跑 |
 | `scripts/restart-role.sh` | 重启单个角色会话（结束旧窗口进程 → 同一 runner 重开 → 同名重新注册 → 更新 windows.txt），用于角色会话"坏了"的恢复 |
 | `scripts/doctor.sh` | 只读自检 |
 
@@ -55,4 +55,4 @@
 
 - `runs/<slug>/…`
 - `.claude/agent-team-cli/{windows.txt, run-*.sh}`（窗口记录与 runner，shutdown 或陈旧检测时清理）
-- `.claude/settings.local.json` 中的 `crossSessionInbound: accept`（⚠️ 实测在 auto 模式主控下未生效；真正决定能否收到 bypass 角色消息的是**主控自身权限模式**，见 [design-decisions](design-decisions.md) 第 6 条）
+- 主控与角色启动时经 `--settings` 传入的 `crossSessionInbound: accept`（**只有启动参数这条路有效**；写进项目级 settings 是空操作，见 [design-decisions](design-decisions.md) 第 6 条）

@@ -104,6 +104,18 @@ mark "小节 3c. shutdown-team.sh --abandon"; echo "== 3c. shutdown-team.sh --ab
 mkdir -p "$Q/runs/demo" && printf 'skill: agent-team-cli/SKILL.md\n阶段: [2] 执行验证环\n' > "$Q/runs/demo/state.md"
 bash "$SKILL/scripts/shutdown-team.sh" "$Q" --abandon demo >/dev/null 2>&1
 check "--abandon 把阶段改为已放弃完成" "grep -q '^阶段: \[P5\] 完成（已放弃）' '$Q/runs/demo/state.md'"
+# 团队令牌必须随团队一同作废：令牌要能区分团队世代，否则侥幸存活的旧角色窗口
+# 仍能接受新团队指令——正好是它要防的场景。
+SD="${TMP}/shutdown"; mkdir -p "${SD}/.claude/agent-team-cli" "${SD}/runs/t1"
+printf 'main=1\nplanner=99999991\n' > "${SD}/.claude/agent-team-cli/windows.txt"
+echo "tok12345" > "${SD}/.claude/agent-team-cli/token"
+printf 'skill: ~/.claude/skills/agent-team-cli/SKILL.md\n阶段: [2] 执行验证环\n' > "${SD}/runs/t1/state.md"
+# shellcheck disable=SC2034  # 在 check 的 eval 字符串中使用，shellcheck 无法看穿 eval
+SDOUT="$(bash "${SKILL}/scripts/shutdown-team.sh" "${SD}" 2>&1)"
+check "shutdown 后团队令牌已作废" "[ ! -f '${SD}/.claude/agent-team-cli/token' ]"
+check "shutdown 未传 --abandon 时提示孤儿状态" "printf '%s' \"\${SDOUT}\" | grep -q '仍标记为进行中'"
+check "该提示给出可直接执行的 --abandon 命令" "printf '%s' \"\${SDOUT}\" | grep -q -- '--abandon t1'"
+
 check "无 windows.txt 时 shutdown 温和退出(0)" "bash '$SKILL/scripts/shutdown-team.sh' '$Q' >/dev/null 2>&1"
 
 echo "== 3d. PATH 无 claude 时 DRY_RUN 仍可用（CI 场景）=="
@@ -157,6 +169,9 @@ OUT="$(echo '{"source":"compact"}' | bash "$H")"
 check "进行中任务 → 注入且识别 compact" "echo \"\$OUT\" | grep -q 'agent-team-cli-recovery' && echo \"\$OUT\" | grep -q '上下文刚被压缩' && echo \"\$OUT\" | grep -q '正在等待: verifier'"
 # shellcheck disable=SC2034  # 在 check 的 eval 字符串中使用，shellcheck 无法看穿 eval
 OUT2="$(bash "$H" </dev/null)"
+check "进行中但无角色在册 → 给出孤儿状态警告" "echo \"\${OUT}\" | grep -q '没有任何角色会话在册'"
+check "孤儿状态警告附带 --abandon 处置命令" "echo \"\${OUT}\" | grep -q -- '--abandon'"
+check "提醒核对 state.md 记录的主控名" "echo \"\${OUT}\" | grep -q '若与你当前会话名不符'"
 check "无 stdin 也不报错" "echo \"\$OUT2\" | grep -q 'agent-team-cli-recovery'"
 cd "$ROOT" || exit 1
 
@@ -209,7 +224,7 @@ done <<< "$(git -C "$ROOT" ls-files '*.md' 2>/dev/null)"
 BADDOC="$(LC_ALL=C git -C "${ROOT}" ls-files '*.md' | while IFS= read -r f; do
   LC_ALL=C grep -nE 'claude --name +main([^-a-zA-Z0-9]|$)' "${ROOT}/$f" | sed "s|^|$f:|"
 done)"
-check "文档未教用户用保留字主控名 atc-main${BADDOC:+（${BADDOC}）}" "[ -z '$BADDOC' ]"
+check "文档未教用户用保留字主控名 main${BADDOC:+（${BADDOC}）}" "[ -z '$BADDOC' ]"
 
 check "Markdown 内部链接均可解析${BROKEN:+（断链: ${BROKEN}）}" "[ -z '$BROKEN' ]"
 

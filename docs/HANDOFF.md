@@ -41,6 +41,11 @@ Claude Code 的多会话 Agent Team 编排 skill：主控开 4 个 Terminal 窗�
   两个对策都要在：后台块一律 `>/dev/null 2>&1`（osa 里那句是承重的），
   以及看门狗用「多次短 sleep」而非「一次长 sleep」，把孤儿存活压到 1 秒内。
   判定方法：`bash tests/run.sh > 文件` 秒退但 `bash tests/run.sh | tail` 挂住，就是这个问题。
+- **`state.md` 与「团队是否活着」是两个事实源，会互相矛盾**。不带 `--abandon` 的 shutdown 只关窗、
+  不改 state.md，于是留下孤儿状态：状态说进行中、团队却已不存在，恢复 hook 照着一个不成立的世界注入
+  （还会带上可能已作废的主控名）。靠人记得加 `--abandon` 不可靠。现在两端都加了防御：
+  shutdown 检测到孤儿状态会打印处置命令；recover hook 会做活体校验并在无角色在册时明确警告。
+  **hook 里的活体校验只能读文件与会话注册表，绝不能调 osascript** —— 它在任意项目启动时都会跑。
 - **主控会话名绝不能是 `main`**。`main` 是 SendMessage 的保留收件人（指“本会话的主对话”，
   供子代理回话用）。主控叫 `main` 时，角色按名字回报会被拦成
   `You are the main conversation — "main" addresses you`，**且无任何绕过**：

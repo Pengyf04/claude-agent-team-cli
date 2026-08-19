@@ -28,7 +28,7 @@
 ```bash
 mkdir demo && cd demo && git init
 bash ~/.claude/skills/agent-team-cli/scripts/ensure-inbound.sh .
-claude --name main
+claude --name atc-main
 # 会话内（把 task.md 的验收标准直接贴进去，或给出它在你机器上的绝对路径）：
 /agent-team-cli 用 Python 标准库实现命令行番茄钟 pomodoro.py + pytest 测试。验收标准：<粘贴 task.md 中的 7 条>
 ```

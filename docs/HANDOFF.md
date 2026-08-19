@@ -41,6 +41,16 @@ Claude Code 的多会话 Agent Team 编排 skill：主控开 4 个 Terminal 窗�
   两个对策都要在：后台块一律 `>/dev/null 2>&1`（osa 里那句是承重的），
   以及看门狗用「多次短 sleep」而非「一次长 sleep」，把孤儿存活压到 1 秒内。
   判定方法：`bash tests/run.sh > 文件` 秒退但 `bash tests/run.sh | tail` 挂住，就是这个问题。
+- **主控会话名绝不能是 `main`**。`main` 是 SendMessage 的保留收件人（指“本会话的主对话”，
+  供子代理回话用）。主控叫 `main` 时，角色按名字回报会被拦成
+  `You are the main conversation — "main" addresses you`，**且无任何绕过**：
+  ListAgents 给的 ref 不可达，系统自己建议的 ref 也照样落回拦截，sessionId 同样不可达。
+  团队必然卡死在 P3 握手。已在 2.1.229 与 2.1.235 上各自复现 —— **不是某个版本的回归，一直如此**。
+  （历史上能跑通，是因为当时主控用的是桌面版会话，其注册名并非字面的 `main`。）
+  现在 `launch-team.sh` 会在开窗前拒绝该名字，`tests/run.sh` 有用例与文档 lint 双重守护。
+- **主控权限模式决定能否收到角色消息**，与是不是桌面版无关：bypass 可收，auto/default 会被扣。
+  2026-08-19 实测命令行 auto 模式主控同样被扣，而项目级 `crossSessionInbound: accept` 在位却未生效
+  —— 后者根因尚未定位，改名后需重验。
 - **中文提示信息里，`$VAR` 绝不能紧挨中文字符，必须写 `${VAR}`**。UTF-8 locale 下 bash 会把
   紧跟其后的中文高位字节并进变量名（报 `PASS?: unbound variable`），C locale 则不会。
   维护者本机 `LC_CTYPE=C`，所以本地怎么测都正常 —— 而几乎所有真实用户都是 UTF-8 locale，

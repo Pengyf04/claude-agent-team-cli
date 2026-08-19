@@ -38,7 +38,7 @@ osa() {
 }
 
 PROJ_ARG="${1:?用法: launch-team.sh <项目目录> [main会话名] [团队后缀]}"
-MAIN_NAME="${2:-main}"
+MAIN_NAME="${2:-atc-main}"
 SUFFIX="${3:-}"
 PROJ="$(cd "$PROJ_ARG" && pwd)"
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -49,6 +49,18 @@ WINFILE="$RUNTIME_DIR/windows.txt"
 case "$PROJ$MAIN_NAME$SUFFIX" in
   *\'* | *\"* | *\\* | *$'\n'*)
     echo "错误: 项目路径 / main会话名 / 团队后缀 中包含引号、反斜杠或换行，暂不支持。" >&2
+    exit 1 ;;
+esac
+
+# ---------- 主控名保留字校验 ----------
+# `main` 是 SendMessage 的保留收件人（指“本会话的主对话”，供子代理回话用）。
+# 主控若叫 main，角色按名字回报会被拦成 “You are the main conversation — "main" addresses you”，
+# 且无任何绕过：ListAgents 给的 ref 不可达，系统自己建议的 ref 也照样落回拦截。
+# 这会让整个团队卡死在 P3 握手。已在 2.1.229 与 2.1.235 上复现，不是某版本的回归。
+case "$(printf '%s' "${MAIN_NAME}" | tr 'A-Z' 'a-z')" in
+  main)
+    echo "错误: 主控会话名不能是 \"${MAIN_NAME}\" —— main 是 SendMessage 的保留收件人，角色将无法回报，团队会卡死在握手。" >&2
+    echo "请用非保留字名字重启主控，例如：claude --name atc-main（多项目并行时建议 atc-main-<slug>），再重新运行本脚本。" >&2
     exit 1 ;;
 esac
 

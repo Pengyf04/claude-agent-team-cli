@@ -3,7 +3,7 @@
 自动化测试（`tests/run.sh`）覆盖不了真实 Claude 会话与开窗；每次改动 SKILL.md / roles / launch 脚本后，发版前至少跑一遍本清单（约 20–40 分钟，用一个 10 分钟内能完成的小任务）。
 
 ## 准备
-- [ ] `./install.sh --link` 后新开一个主控会话：`cd <空目录> && git init && claude --name main`
+- [ ] `./install.sh --link` 后新开一个主控会话：`cd <空目录> && git init && claude --name atc-main`（名字不能是 `main`——保留字）
 - [ ] `bash ~/.claude/skills/agent-team-cli/scripts/doctor.sh` 无 ❌
 
 ## P0–P3

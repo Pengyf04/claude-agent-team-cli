@@ -46,9 +46,10 @@ cd claude-agent-team-cli && ./install.sh
 ```bash
 cd /path/to/your/project        # 建议是 git 仓库；这个目录会成为项目根
 bash ~/.claude/skills/agent-team-cli/scripts/ensure-inbound.sh .   # 一次性：让本项目的会话能收到跨会话消息
-claude --name main              # 启动主控；模型/effort 按需自选
+claude --name atc-main          # 启动主控；名字不能叫 main（见下），模型/effort 按需自选
 ```
-> 第二行也可省略，改为 `claude --name main --settings '{"crossSessionInbound":"accept"}'` 启动主控。两者都不做也能用——但主控会在 P1 写入该配置后让你重启一次主控。
+> **主控名不能是 `main`**：`main` 是 Claude Code 中 SendMessage 的保留收件人（指“本会话的主对话”），主控若叫 `main`，角色回报会被系统拦截且无任何绕过，团队会卡死在握手。`launch-team.sh` 会在开窗前直接拒绝该名字。
+> 第二行也可省略，改为 `claude --name atc-main --settings '{"crossSessionInbound":"accept"}'` 启动主控。两者都不做也能用——但主控会在 P1 写入该配置后让你重启一次主控。
 
 在主控会话里：
 ```
@@ -99,7 +100,7 @@ claude --name main              # 启动主控；模型/effort 按需自选
 
 fast 模式没有启动 flag，且仅 Opus 系支持——需要时在 executor 窗口手动输入 `/fast`。
 
-`launch-team.sh` 还支持 `DRY_RUN=1`（只生成启动脚本不开窗）、`POSITION_MAIN=1/0`（是否移动主控窗口；默认仅当主控运行在 Terminal.app 时才移动）。角色会话名自动带任务 slug 后缀（如 `executor-pomodoro-cli`）；**多项目并行时主控名必须互不相同**（建议 `claude --name main-<slug>`），因为角色首次 READY 按主控名寻址。
+`launch-team.sh` 还支持 `DRY_RUN=1`（只生成启动脚本不开窗）、`POSITION_MAIN=1/0`（是否移动主控窗口；默认仅当主控运行在 Terminal.app 时才移动）。角色会话名自动带任务 slug 后缀（如 `executor-pomodoro-cli`）；**主控名不能是 `main`（保留字，脚本会拒绝）；多项目并行时主控名还必须互不相同**（建议 `claude --name atc-main-<slug>`），因为角色首次 READY 按主控名寻址。
 
 ---
 

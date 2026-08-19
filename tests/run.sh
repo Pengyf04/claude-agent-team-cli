@@ -58,29 +58,39 @@ check "restart-role.sh 拒绝非法角色" "! bash '$SKILL/scripts/restart-role.
 
 mark "小节 3. launch-team.sh DRY_RUN"; echo "== 3. launch-team.sh DRY_RUN =="
 P="$TMP/proj"; mkdir -p "$P"
-DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main demo >/dev/null 2>&1
+DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" atc-main demo >/dev/null 2>&1
 check "默认: planner 用 claude-fable-5/xhigh" "grep -q -- '--model \"claude-fable-5\"' '$P/.claude/agent-team-cli/run-planner.sh' && grep -q -- '--effort \"xhigh\"' '$P/.claude/agent-team-cli/run-planner.sh'"
 check "默认: executor 用 claude-opus-5/high" "grep -q -- '--model \"claude-opus-5\"' '$P/.claude/agent-team-cli/run-executor.sh' && grep -q -- '--effort \"high\"' '$P/.claude/agent-team-cli/run-executor.sh'"
 check "默认: 权限 bypassPermissions" "grep -q -- '--permission-mode \"bypassPermissions\"' '$P/.claude/agent-team-cli/run-verifier.sh'"
-check "后缀: 会话名 executor-demo, 主控名 main" "grep -q -- '--name \"executor-demo\"' '$P/.claude/agent-team-cli/run-executor.sh' && grep -q '主控会话名为「main」' '$P/.claude/agent-team-cli/run-executor.sh'"
+check "后缀: 会话名 executor-demo, 主控名 atc-main" "grep -q -- '--name \"executor-demo\"' '$P/.claude/agent-team-cli/run-executor.sh' && grep -q '主控会话名为「atc-main」' '$P/.claude/agent-team-cli/run-executor.sh'"
 check "runner 含 crossSessionInbound accept 与角色 prompt 注入" "grep -q 'crossSessionInbound' '$P/.claude/agent-team-cli/run-planner.sh' && grep -q -- '--append-system-prompt' '$P/.claude/agent-team-cli/run-planner.sh'"
 check "runner 含 claude 检测" "grep -q 'command -v claude' '$P/.claude/agent-team-cli/run-planner.sh'"
 check "生成了团队令牌文件且注入 runner 启动指令" "[ -s '$P/.claude/agent-team-cli/token' ] && grep -q \"团队令牌为「\$(cat '$P/.claude/agent-team-cli/token')」\" '$P/.claude/agent-team-cli/run-planner.sh'"
 TOK1="$(cat "$P/.claude/agent-team-cli/token")"
-DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main demo >/dev/null 2>&1
+DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" atc-main demo >/dev/null 2>&1
 check "重复生成 runner 时令牌保持不变" "[ \"\$(cat '$P/.claude/agent-team-cli/token')\" = '$TOK1' ]"
 check "runner 语法" "bash -n '$P/.claude/agent-team-cli/run-planner.sh'"
 rm -rf "$P/.claude"
-ATC_MODEL_DEFAULT=opus ATC_MODEL_PLAN_REVIEWER=sonnet ATC_EFFORT_EXECUTOR=medium ATC_PERMISSION_MODE=acceptEdits DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main demo >/dev/null 2>&1
+ATC_MODEL_DEFAULT=opus ATC_MODEL_PLAN_REVIEWER=sonnet ATC_EFFORT_EXECUTOR=medium ATC_PERMISSION_MODE=acceptEdits DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" atc-main demo >/dev/null 2>&1
 check "覆盖: ATC_MODEL_DEFAULT→planner=opus" "grep -q -- '--model \"opus\"' '$P/.claude/agent-team-cli/run-planner.sh'"
 check "覆盖: ATC_MODEL_DEFAULT 也作用于 executor" "grep -q -- '--model \"opus\"' '$P/.claude/agent-team-cli/run-executor.sh'"
 check "覆盖: ATC_MODEL_PLAN_REVIEWER=sonnet" "grep -q -- '--model \"sonnet\"' '$P/.claude/agent-team-cli/run-plan-reviewer.sh'"
 check "覆盖: ATC_EFFORT_EXECUTOR=medium" "grep -q -- '--effort \"medium\"' '$P/.claude/agent-team-cli/run-executor.sh'"
 check "覆盖: ATC_PERMISSION_MODE=acceptEdits" "grep -q -- '--permission-mode \"acceptEdits\"' '$P/.claude/agent-team-cli/run-executor.sh'"
 rm -rf "$P/.claude"
-check "非法权限模式被拒绝" "! ATC_PERMISSION_MODE=yolo DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' '$P' main demo >/dev/null 2>&1"
-check "路径含单引号被拒绝" "! DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' \"$TMP/it's\" main demo >/dev/null 2>&1"
-rm -rf "$P/.claude"; DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main >/dev/null 2>&1
+check "非法权限模式被拒绝" "! ATC_PERMISSION_MODE=yolo DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' '$P' atc-main demo >/dev/null 2>&1"
+check "路径含单引号被拒绝" "! DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' \"$TMP/it's\" atc-main demo >/dev/null 2>&1"
+# 回归 2026-08-19 E2E：主控名叫 main 时，角色按名字回报被 SendMessage 拦成
+# "You are the main conversation" —— main 是保留收件人，且无绕过（ListAgents 给的 ref
+# 不可达，系统自己建议的 ref 也照样落回拦截）。团队会卡死在 P3 握手。
+# 已在 2.1.229 与 2.1.235 上复现，不是某版本回归。必须在开窗前就拒绝。
+for n in main MAIN Main; do
+  check "拒绝保留字主控名 ${n}（否则团队卡死在握手）" "! DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' '$P' $n demo >/dev/null 2>&1"
+done
+rm -rf "$P/.claude"
+check "非保留字主控名可正常启动" "DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' '$P' atc-main demo >/dev/null 2>&1"
+rm -rf "$P/.claude"
+rm -rf "$P/.claude"; DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" atc-main >/dev/null 2>&1
 check "无后缀: 裸角色名" "grep -q -- '--name \"executor\"' '$P/.claude/agent-team-cli/run-executor.sh'"
 
 mark "小节 3b. ensure-inbound.sh"; echo "== 3b. ensure-inbound.sh =="
@@ -98,12 +108,12 @@ check "无 windows.txt 时 shutdown 温和退出(0)" "bash '$SKILL/scripts/shutd
 
 echo "== 3d. PATH 无 claude 时 DRY_RUN 仍可用（CI 场景）=="
 rm -rf "$P/.claude"
-check "无 claude 也能 DRY_RUN" "env -i HOME='$HOME' PATH=/usr/bin:/bin DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' '$P' main demo >/dev/null 2>&1 && [ -f '$P/.claude/agent-team-cli/run-planner.sh' ]"
+check "无 claude 也能 DRY_RUN" "env -i HOME='$HOME' PATH=/usr/bin:/bin DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' '$P' atc-main demo >/dev/null 2>&1 && [ -f '$P/.claude/agent-team-cli/run-planner.sh' ]"
 
 mark "小节 4. 陈旧记录判定"; echo "== 4. 陈旧记录判定 =="
 rm -rf "$P/.claude"; mkdir -p "$P/.claude/agent-team-cli"
 printf 'main=0\nplanner=99999991\nexecutor=99999992\n' > "$P/.claude/agent-team-cli/windows.txt"
-OUT="$(DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main demo 2>&1)"
+OUT="$(DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" atc-main demo 2>&1)"
 check "窗口均不存在 → 自动清理并继续" "echo \"\$OUT\" | grep -q '陈旧' && echo \"\$OUT\" | grep -q 'DRY_RUN'"
 
 echo "== 4b. osascript 阻塞时不挂死（headless/CI 回归）=="
@@ -113,7 +123,7 @@ FAKEBIN="$TMP/fakebin"; mkdir -p "$FAKEBIN"
 printf '#!/bin/bash\nsleep 120\n' > "$FAKEBIN/osascript"; chmod +x "$FAKEBIN/osascript"
 R="$TMP/proj-hang"; mkdir -p "$R"
 T0=$(date +%s)
-PATH="$FAKEBIN:$PATH" DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$R" main demo >"$TMP/hang.out" 2>&1
+PATH="$FAKEBIN:$PATH" DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$R" atc-main demo >"$TMP/hang.out" 2>&1
 HRC=$?; T1=$(date +%s)
 check "osascript 永久阻塞时 launch-team.sh 仍正常退出" "[ $HRC -eq 0 ]"
 check "且在 30 秒内结束（实测 $((T1-T0)) 秒）" "[ $((T1-T0)) -lt 30 ]"
@@ -128,7 +138,7 @@ check "doctor.sh 同环境下也在 30 秒内结束（实测 $((T3-T2)) 秒）" 
 # 杀死，而是 98% CPU 无限空转，命令替换永远等不到它 —— CI 就是这么挂死的。
 R2="$TMP/proj-sigpipe"; mkdir -p "$R2"
 T4=$(date +%s)
-bash -c "trap '' PIPE; DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' '$R2' main demo" >/dev/null 2>&1
+bash -c "trap '' PIPE; DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' '$R2' atc-main demo" >/dev/null 2>&1
 SRC=$?; T5=$(date +%s)
 check "SIGPIPE 被忽略时 launch-team.sh 不空转挂死（实测 $((T5-T4)) 秒）" "[ $SRC -eq 0 ] && [ $((T5-T4)) -lt 30 ]"
 check "该环境下仍能正常生成 8 位令牌" "[ \"\$(wc -c < '$R2/.claude/agent-team-cli/token' | tr -d ' ')\" = 9 ]"
@@ -194,6 +204,13 @@ while IFS= read -r f; do
     [ -e "$tgt" ] || BROKEN="$BROKEN$f -> $link; "
   done <<< "$(grep -oE '\]\([^)]+\)' "$ROOT/$f" 2>/dev/null | sed 's/^](//;s/)$//')"
 done <<< "$(git -C "$ROOT" ls-files '*.md' 2>/dev/null)"
+# 脚本拒绝了保留字，但文档若还教用户 `claude --name main`，用户照样一头撞上去。
+# 这次事故的根本教训就是二者必须同时正确。
+BADDOC="$(LC_ALL=C git -C "${ROOT}" ls-files '*.md' | while IFS= read -r f; do
+  LC_ALL=C grep -nE 'claude --name +main([^-a-zA-Z0-9]|$)' "${ROOT}/$f" | sed "s|^|$f:|"
+done)"
+check "文档未教用户用保留字主控名 atc-main${BADDOC:+（${BADDOC}）}" "[ -z '$BADDOC' ]"
+
 check "Markdown 内部链接均可解析${BROKEN:+（断链: ${BROKEN}）}" "[ -z '$BROKEN' ]"
 
 # CLAUDE.md 的人工约定「新增配置项须同步 README + doctor.sh」在此变成自动检查——

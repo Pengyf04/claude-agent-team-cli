@@ -94,27 +94,20 @@ rm -rf "$P/.claude"
 rm -rf "$P/.claude"; DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" atc-main >/dev/null 2>&1
 check "无后缀: 裸角色名" "grep -q -- '--name \"executor\"' '$P/.claude/agent-team-cli/run-executor.sh'"
 
-mark "小节 3b. ensure-inbound.sh"; echo "== 3b. ensure-inbound.sh =="
-E="$SKILL/scripts/ensure-inbound.sh"; Q="$TMP/proj2"; mkdir -p "$Q/.claude" && git -C "$Q" init -q 2>/dev/null
+mark "小节 3b. prepare-project.sh"; echo "== 3b. prepare-project.sh =="
+E="$SKILL/scripts/prepare-project.sh"; Q="$TMP/proj2"; mkdir -p "$Q/.claude" && git -C "$Q" init -q 2>/dev/null
 printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$Q/.claude/settings.local.json"
-check "首次写入输出 NEW 且保留其他键" "[ \"\$(bash '$E' '$Q')\" = NEW ] && grep -q 'Bash(ls)' '$Q/.claude/settings.local.json' && grep -q '\"crossSessionInbound\": \"accept\"' '$Q/.claude/settings.local.json'"
-check "再次运行输出 EXISTS" "[ \"\$(bash '$E' '$Q')\" = EXISTS ]"
-# 收尾移除 crossSessionInbound 必须只摘该键：它是有安全含义的持久配置，任务结束不该留着；
-# 但直接删整个文件会连带抹掉用户自己的项目配置（2026-08-19 E2E 实测发生过）。
-RM1="${TMP}/rm1"; mkdir -p "${RM1}/.claude"
-printf '{"crossSessionInbound":"accept","permissions":{"allow":["Bash(ls)"]}}\n' > "${RM1}/.claude/settings.local.json"
-R1="$(bash "${E}" "${RM1}" --remove)"
-check "--remove 返回 REMOVED" "[ '${R1}' = REMOVED ]"
-check "--remove 只摘该键，保留其他内容" "! grep -q crossSessionInbound '${RM1}/.claude/settings.local.json' && grep -q 'Bash(ls)' '${RM1}/.claude/settings.local.json'"
-RM2="${TMP}/rm2"; mkdir -p "${RM2}/.claude"
-printf '{"crossSessionInbound":"accept"}\n' > "${RM2}/.claude/settings.local.json"
-bash "${E}" "${RM2}" --remove >/dev/null
-check "--remove 在只剩该键时删掉整个文件不留空壳" "[ ! -f '${RM2}/.claude/settings.local.json' ]"
-check "--remove 幂等（已无该键返回 ABSENT）" "[ \"\$(bash '${E}' '${RM1}' --remove)\" = ABSENT ]"
-check "--remove 幂等（无文件返回 NOFILE）" "[ \"\$(bash '${E}' '${RM2}' --remove)\" = NOFILE ]"
-RM3="${TMP}/rm3"; mkdir -p "${RM3}/.claude"; printf '{ not json' > "${RM3}/.claude/settings.local.json"
-check "--remove 遇非法 JSON 拒绝且不改动" "! bash '${E}' '${RM3}' --remove >/dev/null 2>&1 && grep -q 'not json' '${RM3}/.claude/settings.local.json'"
+check "输出 OK" "[ \"\$(bash '$E' '$Q')\" = OK ]"
 check ".git/info/exclude 含运行时产物" "grep -qxF '.claude/agent-team-cli/' '$Q/.git/info/exclude' && grep -qxF '.claude/settings.local.json' '$Q/.git/info/exclude'"
+bash "$E" "$Q" >/dev/null
+check "幂等：重复运行不重复追加" "[ \"\$(grep -cxF '.claude/agent-team-cli/' '$Q/.git/info/exclude')\" = 1 ]"
+check "不碰用户自己的 settings.local.json" "grep -q 'Bash(ls)' '$Q/.claude/settings.local.json'"
+# 回归 2026-08-19：项目级 crossSessionInbound 是结构性空操作（该键的项目级来源只在收紧时
+# 才被采纳，而 accept 是最宽松档），本脚本绝不能再写它 —— 否则又会给用户虚假的安全感。
+check "绝不写入 crossSessionInbound（项目级写它是空操作）" "! grep -q crossSessionInbound '$Q/.claude/settings.local.json'"
+check "脚本自身不含 crossSessionInbound 写入逻辑" "! grep -vE '^#' '$E' | grep -q 'crossSessionInbound'"
+NG="$TMP/proj-nogit"; mkdir -p "$NG"
+check "非 git 目录静默跳过且不报错" "[ \"\$(bash '$E' '$NG')\" = OK ]"
 
 mark "小节 3c. shutdown-team.sh --abandon"; echo "== 3c. shutdown-team.sh --abandon =="
 mkdir -p "$Q/runs/demo" && printf 'skill: agent-team-cli/SKILL.md\n阶段: [2] 执行验证环\n' > "$Q/runs/demo/state.md"
@@ -249,6 +242,14 @@ done <<< "$(git -C "$ROOT" ls-files '*.md' 2>/dev/null)"
 BADDOC="$(LC_ALL=C git -C "${ROOT}" ls-files '*.md' | while IFS= read -r f; do
   LC_ALL=C grep -nE 'claude --name +main([^-a-zA-Z0-9]|$)' "${ROOT}/$f" | sed "s|^|$f:|"
 done)"
+# 文档不得再"教用户去执行" ensure-inbound.sh：项目级写 crossSessionInbound 是空操作，
+# 照做也会卡死（2026-08-19 实证）。只查调用写法，不查叙述性提及——
+# CHANGELOG 是历史记录、design-decisions 与 HANDOFF 需要保留"原来叫什么、为什么废弃"。
+BADCFG="$(LC_ALL=C git -C "${ROOT}" ls-files '*.md' | grep -v '^CHANGELOG.md$' | while IFS= read -r f; do
+  LC_ALL=C grep -nE 'bash [^|]*ensure-inbound\.sh' "${ROOT}/$f" | sed "s|^|$f:|"
+done)"
+check "文档不再引导用户执行已废弃的 ensure-inbound.sh${BADCFG:+（${BADCFG}）}" "[ -z '$BADCFG' ]"
+
 check "文档未教用户用保留字主控名 main${BADDOC:+（${BADDOC}）}" "[ -z '$BADDOC' ]"
 
 check "Markdown 内部链接均可解析${BROKEN:+（断链: ${BROKEN}）}" "[ -z '$BROKEN' ]"

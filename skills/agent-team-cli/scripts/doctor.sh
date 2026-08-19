@@ -69,7 +69,7 @@ warn "请确认你的账号能使用上述模型；无 Fable/Opus 权限时可 e
 
 echo "== 项目目录: $PROJ =="
 if git -C "$PROJ" rev-parse --is-inside-work-tree >/dev/null 2>&1; then ok "是 git 仓库（bypassPermissions 的回滚兜底）"; else warn "不是 git 仓库——skill 会在 P1 自动 git init；建议自行先 init 并提交"; fi
-if [ -f "$PROJ/.claude/settings.local.json" ] && grep -q '"crossSessionInbound"[[:space:]]*:[[:space:]]*"accept"' "$PROJ/.claude/settings.local.json"; then ok "项目已配置 crossSessionInbound=accept"; else warn "项目尚未配置 crossSessionInbound=accept：建议启动主控前运行 bash $S/scripts/ensure-inbound.sh ${PROJ}，或以 claude --name main --settings '{\"crossSessionInbound\":\"accept\"}' 启动主控（否则 skill 在 P1 写入后需重启主控一次）"; fi
+warn "主控须能收到 bypass 角色的消息：启动时带 --settings '{\"crossSessionInbound\":\"accept\"}'（显式值优先，与权限模式无关），或让主控也跑 bypassPermissions。项目级 settings.local.json 写该键是空操作——项目级来源只在收紧时才被采纳"
 if [ -f "$PROJ/.claude/agent-team-cli/windows.txt" ]; then warn "存在上次团队记录 .claude/agent-team-cli/windows.txt（若窗口已关，脚本会自动清理；仍开着则需先关闭）"; fi
 [ -s "$PROJ/.claude/agent-team-cli/token" ] && echo "  ℹ️  当前团队令牌: $(cat "$PROJ/.claude/agent-team-cli/token")（主控派活消息须携带）"
 

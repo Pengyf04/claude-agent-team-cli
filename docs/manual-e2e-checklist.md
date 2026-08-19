@@ -3,13 +3,13 @@
 自动化测试（`tests/run.sh`）覆盖不了真实 Claude 会话与开窗；每次改动 SKILL.md / roles / launch 脚本后，发版前至少跑一遍本清单（约 20–40 分钟，用一个 10 分钟内能完成的小任务）。
 
 ## 准备
-- [ ] `./install.sh --link` 后新开一个主控会话：`cd <空目录> && git init && claude --name atc-main --permission-mode bypassPermissions`（名字不能是 `main`——保留字；主控须为 bypass，否则收不到角色消息）
+- [ ] `./install.sh --link` 后新开一个主控会话：`cd <空目录> && git init && claude --name atc-main --settings '{"crossSessionInbound":"accept"}'`（名字不能是 `main`——保留字）
 - [ ] `bash ~/.claude/skills/agent-team-cli/scripts/doctor.sh` 无 ❌
 
 ## P0–P3
 - [ ] `/agent-team-cli <小任务>` 被识别，主控进入目标对齐并索要验收标准
-- [ ] 主控自身权限模式为 `bypassPermissions`（否则角色消息会被扣，团队卡死）
-- [ ] P1：项目 `.claude/settings.local.json` 出现 `crossSessionInbound: accept`；`runs/<slug>/{task.md,state.md}` 生成
+- [ ] 主控启动时带了 `--settings '{"crossSessionInbound":"accept"}'`（否则角色消息会被扣，团队卡死）
+- [ ] P1：`runs/<slug>/{task.md,state.md}` 生成
 - [ ] P2：4 个 Terminal 窗口弹出、田字格布局、标题 `agent-team:<role>-<slug>`；`.claude/agent-team-cli/windows.txt` 有 5 行
 - [ ] 各窗口模型/effort 与预设（或环境变量覆盖）一致
 - [ ] 4 个 READY 到达主控且**未被 hold**；主控等用户回复「确认」（不自动通过）

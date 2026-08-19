@@ -123,6 +123,16 @@ PATH="$FAKEBIN:$PATH" bash "$SKILL/scripts/doctor.sh" "$R" >/dev/null 2>&1
 T3=$(date +%s)
 check "doctor.sh 同环境下也在 30 秒内结束（实测 $((T3-T2)) 秒）" "[ $((T3-T2)) -lt 30 ]"
 
+# 回归 2026-08-19：SIGPIPE 被忽略时（SIG_IGN 会被子进程继承，Node 写的 GitHub Actions
+# runner 正是如此），`tr -dc ... </dev/urandom | head -c N` 里的 tr 不再会被 head 的退出
+# 杀死，而是 98% CPU 无限空转，命令替换永远等不到它 —— CI 就是这么挂死的。
+R2="$TMP/proj-sigpipe"; mkdir -p "$R2"
+T4=$(date +%s)
+bash -c "trap '' PIPE; DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' '$R2' main demo" >/dev/null 2>&1
+SRC=$?; T5=$(date +%s)
+check "SIGPIPE 被忽略时 launch-team.sh 不空转挂死（实测 $((T5-T4)) 秒）" "[ $SRC -eq 0 ] && [ $((T5-T4)) -lt 30 ]"
+check "该环境下仍能正常生成 8 位令牌" "[ \"\$(wc -c < '$R2/.claude/agent-team-cli/token' | tr -d ' ')\" = 9 ]"
+
 mark "小节 5. session-recover.sh 三场景"; echo "== 5. session-recover.sh 三场景 =="
 H="$SKILL/scripts/session-recover.sh"
 mkdir -p "$TMP/empty"; cd "$TMP/empty" || exit 1

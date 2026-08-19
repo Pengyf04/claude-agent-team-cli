@@ -102,7 +102,11 @@ case "$PERM_MODE" in default|acceptEdits|plan|auto|dontAsk|bypassPermissions|man
 # ---------- 团队令牌：主控每条派活消息须携带，角色只认含令牌的消息（不依赖名字/地址） ----------
 TOKEN_FILE="$RUNTIME_DIR/token"
 if [ -s "$TOKEN_FILE" ]; then TOKEN="$(cat "$TOKEN_FILE")"; else
-  TOKEN="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 8 || true)"
+  # 用 od 有界读取，不要用 `tr -dc ... </dev/urandom | head -c N`：
+  # 那个写法依赖 head 退出后 tr 被 SIGPIPE 杀死，而 SIGPIPE 一旦被忽略（SIG_IGN 会被子进程
+  # 继承——Node 写的 GitHub Actions runner 正是如此），tr 就会无限空转读 /dev/urandom，
+  # 命令替换永远等不到它结束。2026-08-18 的 CI 挂死就是这么来的。
+  TOKEN="$(LC_ALL=C od -An -vtx1 -N 32 /dev/urandom 2>/dev/null | LC_ALL=C tr -dc 'a-f0-9' | cut -c1-8)"
   [ -n "$TOKEN" ] || TOKEN="$(printf '%s' "$RANDOM$RANDOM$(date +%s)" | tail -c 8)"
   printf '%s\n' "$TOKEN" > "$TOKEN_FILE"
 fi

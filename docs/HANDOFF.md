@@ -41,6 +41,11 @@ Claude Code 的多会话 Agent Team 编排 skill：主控开 4 个 Terminal 窗�
   两个对策都要在：后台块一律 `>/dev/null 2>&1`（osa 里那句是承重的），
   以及看门狗用「多次短 sleep」而非「一次长 sleep」，把孤儿存活压到 1 秒内。
   判定方法：`bash tests/run.sh > 文件` 秒退但 `bash tests/run.sh | tail` 挂住，就是这个问题。
+- **别写 `cmd_that_never_ends | head -c N` 这类「无限生产者 + 提前退出消费者」的管道**。
+  它依赖 head 退出后生产者被 SIGPIPE 杀死；而 SIGPIPE 一旦被忽略（`SIG_IGN` 会被子进程继承，
+  Node 写的 GitHub Actions runner 正是如此），生产者会 98% CPU 无限空转，命令替换永远等不到它。
+  令牌生成踩过这个坑，现改为 `od -N 32` 有界读取。判定方法：
+  `bash -c "trap '' PIPE; bash 你的脚本"` 能复现，正常环境不能。
 - `tests/run.sh` 自带看门狗（`TEST_TIMEOUT`，默认 600 秒）：超时会打印**最后进入的检查点**再中止。
   这样作业是正常失败而非被强制取消——被取消时缓冲日志会丢，挂死点就无从定位。
 

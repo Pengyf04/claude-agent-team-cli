@@ -41,6 +41,12 @@ Claude Code 的多会话 Agent Team 编排 skill：主控开 4 个 Terminal 窗�
   两个对策都要在：后台块一律 `>/dev/null 2>&1`（osa 里那句是承重的），
   以及看门狗用「多次短 sleep」而非「一次长 sleep」，把孤儿存活压到 1 秒内。
   判定方法：`bash tests/run.sh > 文件` 秒退但 `bash tests/run.sh | tail` 挂住，就是这个问题。
+- **中文提示信息里，`$VAR` 绝不能紧挨中文字符，必须写 `${VAR}`**。UTF-8 locale 下 bash 会把
+  紧跟其后的中文高位字节并进变量名（报 `PASS?: unbound variable`），C locale 则不会。
+  维护者本机 `LC_CTYPE=C`，所以本地怎么测都正常 —— 而几乎所有真实用户都是 UTF-8 locale，
+  这个 bug 会让第一个陌生人装完就坏。本仓库提示全是中文，这个坑遍地都是：
+  `tests/run.sh` 有 lint 守住，CI 也强制在 `LC_ALL=en_US.UTF-8` 下跑。
+  自查：`LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~]' 你的脚本`
 - **别写 `cmd_that_never_ends | head -c N` 这类「无限生产者 + 提前退出消费者」的管道**。
   它依赖 head 退出后生产者被 SIGPIPE 杀死；而 SIGPIPE 一旦被忽略（`SIG_IGN` 会被子进程继承，
   Node 写的 GitHub Actions runner 正是如此），生产者会 98% CPU 无限空转，命令替换永远等不到它。

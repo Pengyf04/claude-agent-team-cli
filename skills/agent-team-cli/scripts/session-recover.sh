@@ -29,7 +29,7 @@ esac
 
 cat <<EOF
 <agent-team-cli-recovery>
-【agent-team-cli 状态恢复注入 · 触发原因：$WHY】
+【agent-team-cli 状态恢复注入 · 触发原因：${WHY}】
 本项目存在进行中的 Agent Team 任务。请先判断自己的身份：
 - 若你是**主控(main)**：立即重读 ~/.claude/skills/agent-team-cli/SKILL.md，然后严格以下方 state.md 为准恢复状态机（阶段/轮次/正在等待谁/下一步），不要重复已完成的步骤，不要替用户通过任何人工卡点。若"正在等待"是某个角色且你不确定其是否已回报，先 ListAgents 确认在线，再向用户播报当前状态。
 - 若你是**角色会话**（planner / plan-reviewer / executor / verifier）：忽略状态机细节，仅按你 system prompt 中的角色通信协议行事——有未完成的当前任务就继续并回报主控，否则保持待命。

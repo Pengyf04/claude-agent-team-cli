@@ -15,6 +15,7 @@
 - 文档：README（macOS only 置顶）、architecture、design-decisions、troubleshooting、manual-e2e-checklist、HANDOFF；examples/pomodoro-cli 真实运行记录
 - 所有 `osascript` 调用经 `osa` 超时包装器（`ATC_OSA_TIMEOUT`，默认 8 秒）：headless 环境（CI runner / SSH / 锁屏 / 自动化授权未决）下 osascript 会无限阻塞而非报错，原有失败兜底永远走不到，会导致 `launch-team.sh` 与 `doctor.sh` 无提示卡死
 - 测试：新增 osascript 阻塞回归（伪造阻塞型 osascript 验证不挂死）、Markdown 内部链接完整性、`ATC_*` 配置项与 README/doctor.sh 的同步校验；shellcheck 扩展到覆盖 `tests/run.sh` 自身；泄漏扫描改为只查已入库文件；测试末尾声明未覆盖范围，避免绿灯被误读为全覆盖
+- 修复 UTF-8 locale 下脚本报 `unbound variable` 而无法运行：中文提示中 `$VAR` 紧挨中文字符时，bash 会把中文的高位字节并入变量名（C locale 不触发，故本地长期未暴露）。全部 30 处改为 `${VAR}`，并加入 lint 检查与 `LC_ALL=en_US.UTF-8` 下的 CI 验证
 - 团队令牌生成改用 `od -N 32` 有界读取：原 `tr -dc ... </dev/urandom | head -c 8` 依赖 SIGPIPE 杀死 `tr`，而 SIGPIPE 被忽略时（`SIG_IGN` 会被子进程继承）`tr` 会无限空转，命令替换永远不返回
 - `tests/run.sh` 自带看门狗（`TEST_TIMEOUT`，默认 600 秒）：超时打印最后进入的检查点后中止，让作业正常失败而非被强制取消（被取消时缓冲日志会丢失，挂死点无从定位）
 - 修复后台进程继承 stdout 导致 CI 步骤永不结束：`kill -9` 杀不掉子 shell 底下的 `sleep`，孤儿会继续持有 runner 的输出管道

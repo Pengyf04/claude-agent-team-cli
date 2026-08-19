@@ -194,7 +194,7 @@ while IFS= read -r f; do
     [ -e "$tgt" ] || BROKEN="$BROKEN$f -> $link; "
   done <<< "$(grep -oE '\]\([^)]+\)' "$ROOT/$f" 2>/dev/null | sed 's/^](//;s/)$//')"
 done <<< "$(git -C "$ROOT" ls-files '*.md' 2>/dev/null)"
-check "Markdown 内部链接均可解析${BROKEN:+（断链: $BROKEN）}" "[ -z '$BROKEN' ]"
+check "Markdown 内部链接均可解析${BROKEN:+（断链: ${BROKEN}）}" "[ -z '$BROKEN' ]"
 
 # CLAUDE.md 的人工约定「新增配置项须同步 README + doctor.sh」在此变成自动检查——
 # 靠人记的规矩会烂掉，靠测试的不会。
@@ -203,9 +203,17 @@ for v in $(grep -oE 'ATC_[A-Z]+[A-Z_]*' "$SKILL/scripts/launch-team.sh" | sed 's
   grep -q "$v" "$ROOT/README.md" 2>/dev/null || MISSING="$MISSING README缺:$v "
   grep -q "$v" "$SKILL/scripts/doctor.sh" 2>/dev/null || MISSING="$MISSING doctor缺:$v "
 done
-check "所有 ATC_* 配置项已同步到 README 与 doctor.sh${MISSING:+（$MISSING）}" "[ -z '$MISSING' ]"
+check "所有 ATC_* 配置项已同步到 README 与 doctor.sh${MISSING:+（${MISSING}）}" "[ -z '$MISSING' ]"
+
+# 回归 2026-08-19：`$VAR` 紧挨中文字符时，UTF-8 locale 下 bash 会把中文的高位字节
+# 并进变量名（"PASS?: unbound variable"）。本仓库提示信息全是中文，这个坑遍地都是。
+# C locale 不触发 —— 维护者本机恰好是 C，于是一路没发现，直到 CI 暴露。
+ADJ="$(LC_ALL=C git -C "${ROOT}" ls-files '*.sh' | while IFS= read -r f; do
+  LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~]' "${ROOT}/$f" | sed "s|^|$f:|"
+done)"
+check "无「\$VAR 紧挨非 ASCII」写法（须写成 \${VAR}）${ADJ:+（${ADJ}）}" "[ -z '$ADJ' ]"
 
 echo
-echo "通过 $PASS，失败 $FAIL"
+echo "通过 ${PASS}，失败 $FAIL"
 echo "注: 本套测试不覆盖真实开窗/握手/状态机流转（需 GUI 与 Claude 会话），发版前请按 docs/manual-e2e-checklist.md 人工回归。"
 [ "$FAIL" = 0 ]

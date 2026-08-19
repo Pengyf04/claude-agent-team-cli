@@ -19,13 +19,13 @@ if [ -n "$ABANDON" ]; then
 fi
 RUNTIME_DIR="$PROJ/.claude/agent-team-cli"
 WINFILE="$RUNTIME_DIR/windows.txt"
-[ -f "$WINFILE" ] || { echo "提示: 找不到 $WINFILE（团队未启动或窗口已手动关闭并清理）"; exit 0; }
+[ -f "$WINFILE" ] || { echo "提示: 找不到 ${WINFILE}（团队未启动或窗口已手动关闭并清理）"; exit 0; }
 
 while IFS= read -r pair; do
   [ -z "$pair" ] && continue
   role="${pair%%=*}"; wid="${pair##*=}"
   [ "$role" = "main" ] && continue
-  case "$wid" in ''|0|*[!0-9]*) echo "跳过 $role（无有效窗口 ID: '$wid'）"; continue ;; esac
+  case "$wid" in ''|0|*[!0-9]*) echo "跳过 ${role}（无有效窗口 ID: '$wid'）"; continue ;; esac
 
   TTY="$(osascript -e "tell application \"Terminal\" to get tty of tab 1 of window id $wid" 2>/dev/null || true)"
   if [ -n "$TTY" ]; then

@@ -11,6 +11,7 @@
 - 新增用户可配置项 → 同步 README「参数」表 + `doctor.sh` 输出。
 - 更新 `CHANGELOG.md`；语义化版本；发版：更新版本号 → 打 tag `vX.Y.Z` 并推送 → `release.yml` 自动重跑测试并建 Release（不要手工 `gh release create`，那会绕过门禁）。
 - `main` 受分支保护：改动走 PR，必需检查 `test`（CI 汇总作业）通过才能合并。
+- 中文提示里的变量一律写 `${VAR}` 而非 `$VAR`——UTF-8 locale 下 bash 会把紧跟的中文字节并进变量名（`tests/run.sh` 有 lint 守住）。
 - 所有 `osascript` 调用必须经 `osa` 超时包装器——headless 环境下它会无限阻塞而非报错。
 - workflow 里的 action 一律钉 commit SHA（后跟版本号注释），升级交给 Dependabot。
 

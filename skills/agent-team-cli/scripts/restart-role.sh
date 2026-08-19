@@ -10,7 +10,7 @@ case "$ROLE" in planner|plan-reviewer|executor|verifier) ;; *) echo "错误: 角
 RUNTIME_DIR="$PROJ/.claude/agent-team-cli"
 WINFILE="$RUNTIME_DIR/windows.txt"
 RUNNER="$RUNTIME_DIR/run-$ROLE.sh"
-[ -f "$RUNNER" ] || { echo "错误: 找不到 $RUNNER（团队未用 launch-team.sh 启动过？）" >&2; exit 1; }
+[ -f "$RUNNER" ] || { echo "错误: 找不到 ${RUNNER}（团队未用 launch-team.sh 启动过？）" >&2; exit 1; }
 [ -f "$WINFILE" ] || { echo "错误: 找不到 $WINFILE" >&2; exit 1; }
 
 # 找到该角色记录（会话名可能带后缀：<role> 或 <role>-<suffix>）
@@ -64,4 +64,4 @@ OSA
 )"
 # 3) 更新记录（保留原顺序）
 TMP="$(mktemp)"; sed "s/^$NAME=.*/$NAME=$NEW/" "$WINFILE" > "$TMP" && mv "$TMP" "$WINFILE"
-echo "已重启 $NAME，新窗口 id=$NEW（角色将重新向主控发 READY；新窗口位置可能需要手动摆放）"
+echo "已重启 ${NAME}，新窗口 id=${NEW}（角色将重新向主控发 READY；新窗口位置可能需要手动摆放）"

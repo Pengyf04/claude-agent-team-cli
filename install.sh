@@ -47,7 +47,7 @@ fi
 say "将执行："
 if [ "$LINK" = 1 ]; then say "  1) 符号链接 $DEST -> $SRC"; else say "  1) 复制 $SRC -> $DEST"; fi
 if [ "$NOHOOK" = 0 ]; then
-  say "  2) 修改 $SETTINGS：在 hooks.SessionStart 追加一条恢复 hook（先备份，幂等）"
+  say "  2) 修改 ${SETTINGS}：在 hooks.SessionStart 追加一条恢复 hook（先备份，幂等）"
   say "     command: $HOOK_CMD"
 else
   say "  2) （跳过 hook 注册）"
@@ -67,7 +67,7 @@ if [ -L "$DEST" ] || [ -e "$DEST" ]; then
     BK="$CLAUDE_HOME/agent-team-cli.backup"
     rm -rf "$BK"; mkdir -p "$(dirname "$BK")"
     mv "$DEST" "$BK"
-    say "已将原有 $DEST 备份为 $BK（只保留最近一份）"
+    say "已将原有 $DEST 备份为 ${BK}（只保留最近一份）"
   fi
   # 清理旧版本遗留在 skills/ 内的备份（会被误加载为 skill）
   rm -rf "$DEST.bak" "$DEST".bak-* 2>/dev/null || true

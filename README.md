@@ -1,5 +1,7 @@
 # claude-agent-team-cli
 
+[![ci](https://github.com/Pengyf04/claude-agent-team-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Pengyf04/claude-agent-team-cli/actions/workflows/ci.yml)
+
 **多窗口、多会话的 Claude Code Agent Team 编排框架。**
 一个主控会话（main）自动开 4 个终端窗口，启动 planner / plan-reviewer / executor / verifier 四个**独立 Claude Code 会话**，用 Claude Code 原生的跨会话消息驱动「规划 → 评审 → 执行 ⇄ 验证 → 终验」状态机；每个角色的工作过程在各自窗口里实时可见、可介入；所有需要人拍板的事项统一经主控与你沟通。
 
@@ -44,9 +46,14 @@ cd claude-agent-team-cli && ./install.sh
 ```bash
 cd /path/to/your/project        # 建议是 git 仓库；这个目录会成为项目根
 bash ~/.claude/skills/agent-team-cli/scripts/ensure-inbound.sh .   # 一次性：让本项目的会话能收到跨会话消息
-claude --name main              # 启动主控；模型/effort 按需自选
+claude --name atc-main --permission-mode bypassPermissions   # 启动主控
 ```
-> 第二行也可省略，改为 `claude --name main --settings '{"crossSessionInbound":"accept"}'` 启动主控。两者都不做也能用——但主控会在 P1 写入该配置后让你重启一次主控。
+> **两个参数都别省**，它们各自解决一个会让团队卡死的问题：
+>
+> - **`--name` 不能取 `main`**：`main` 是 Claude Code 中 SendMessage 的保留收件人（指“本会话的主对话”），主控若叫 `main`，角色回报会被系统拦截**且无任何绕过**（ListAgents 给的 ref、系统建议的 ref、sessionId 都不可达），团队必然卡死在握手。`launch-team.sh` 会在开窗前直接拒绝该名字。多项目并行时主控名还须互不相同，建议 `atc-main-<slug>`。
+> - **`--permission-mode bypassPermissions`**：角色会话跑在 bypass 模式，而普通/auto 模式的主控**收不到 bypass 会话的消息**（会被系统扣住等批准），团队同样会卡死。这是目前唯一经过完整端到端验证的配置。若你不想让主控也跑 bypass，需自行确认消息不被扣留——项目级 `crossSessionInbound: accept` 在 auto 模式下实测未生效，原因尚在排查。
+>
+> 模型 / effort 按需自选，见[参数](#参数)。
 
 在主控会话里：
 ```
@@ -91,19 +98,20 @@ claude --name main              # 启动主控；模型/effort 按需自选
 | `ATC_EFFORT_DEFAULT` | 无 | 设置后覆盖全部角色的 effort（`low` / `medium` / `high` / `xhigh` / `max`；请确认所选模型支持该档） |
 | `ATC_EFFORT_PLANNER` 等 `ATC_EFFORT_<ROLE>` | 非 executor `xhigh`，executor `high` | 单角色覆盖 |
 | `ATC_PERMISSION_MODE` | `bypassPermissions` | 角色会话权限模式（`acceptEdits` / `auto` / `default` 等） |
+| `ATC_OSA_TIMEOUT` | `8` | 单次 `osascript` 调用的超时秒数。无图形界面的环境（CI、SSH 登录、锁屏）下 `osascript` 会无限阻塞而非报错，超时后改用兜底屏幕尺寸继续 |
 
 优先级：单角色变量 > `*_DEFAULT` > 内置默认。示例：`export ATC_MODEL_DEFAULT=sonnet ATC_EFFORT_DEFAULT=high` 让全部角色跑 Sonnet+high。
 
 fast 模式没有启动 flag，且仅 Opus 系支持——需要时在 executor 窗口手动输入 `/fast`。
 
-`launch-team.sh` 还支持 `DRY_RUN=1`（只生成启动脚本不开窗）、`POSITION_MAIN=1/0`（是否移动主控窗口；默认仅当主控运行在 Terminal.app 时才移动）。角色会话名自动带任务 slug 后缀（如 `executor-pomodoro-cli`）；**多项目并行时主控名必须互不相同**（建议 `claude --name main-<slug>`），因为角色首次 READY 按主控名寻址。
+`launch-team.sh` 还支持 `DRY_RUN=1`（只生成启动脚本不开窗）、`POSITION_MAIN=1/0`（是否移动主控窗口；默认仅当主控运行在 Terminal.app 时才移动）。角色会话名自动带任务 slug 后缀（如 `executor-pomodoro-cli`）；**主控名不能是 `main`（保留字，脚本会拒绝）；多项目并行时主控名还必须互不相同**（建议 `claude --name atc-main-<slug>`），因为角色首次 READY 按主控名寻址。
 
 ---
 
 ## 安全说明
 
 - **为什么默认 bypassPermissions**：执行 ⇄ 验证的多轮循环要全自动跑完，角色会话不能停下来等你在 4 个窗口里逐个点批准。兜底是 **git**（框架要求项目为 git 仓库，P1 发现不是会先征得你同意再 `git init`）。想更保守：`ATC_PERMISSION_MODE=acceptEdits`。
-- **`crossSessionInbound: accept`**：主控会写入**项目级** `.claude/settings.local.json`（不进 git）。含义是"本项目里启动的会话收到本机其他会话的消息时直接送达，不弹批准框"——没有它，普通模式的主控收到 bypass 角色的消息会被扣住等你批准，全自动就断了。消息即便送达也仍被标记"来自其他会话"：不能替你批准权限、不能改配置、消息里的斜杠命令不会执行。项目不再跑团队时可移除该键（P5 会问你）。
+- **`crossSessionInbound: accept`**：主控会写入**项目级** `.claude/settings.local.json`（不进 git）。含义是"本项目里启动的会话收到本机其他会话的消息时直接送达，不弹批准框"——没有它，普通模式的主控收到 bypass 角色的消息会被扣住等你批准，全自动就断了。消息即便送达也仍被标记"来自其他会话"：不能替你批准权限、不能改配置、消息里的斜杠命令不会执行。项目不再跑团队时可移除该键（P5 会问你，也可自己执行 `bash ~/.claude/skills/agent-team-cli/scripts/ensure-inbound.sh <项目> --remove`——它只摘这一个键、保留文件里你自己的配置，仅当文件再无其他键时才整个删除）。**注意**：该键在 auto 模式主控下实测未生效，别把它当作「主控可以不用 bypass」的依据。
 - **角色来源校验**：角色只执行正文含**团队令牌**的指令（令牌由 `launch-team.sh` 随机生成、写在项目 `.claude/agent-team-cli/token` 并注入角色启动指令）；不含令牌的消息一律不执行。令牌用于区分"本团队的主控"与本机其他会话的误发/伪装消息，不是密码学级防护。
 - **权限边界**：主控绝不指使角色去做主控自己被拒绝的操作（跨会话洗权限）。
 

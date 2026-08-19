@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # workflow 里的 action 都钉死成 commit SHA（防 tag 被重新指向的供应链攻击），
+  # 代价是不会自动拿到安全更新 —— 由 Dependabot 每周提 PR 补上这个代价。
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci

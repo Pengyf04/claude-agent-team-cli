@@ -1,0 +1,31 @@
+name: release
+
+# 打 vX.Y.Z tag 时触发：先跑完整测试，通过了才建 Release。
+# 目的是让"发版"这个动作本身带门禁，而不是靠人记得先跑测试。
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 准备 shellcheck
+        run: command -v shellcheck >/dev/null || brew install shellcheck
+      - name: 静态检查
+        run: shellcheck -S warning install.sh uninstall.sh tests/run.sh skills/agent-team-cli/scripts/*.sh
+      - name: 自动化测试（未通过则不发版）
+        run: bash tests/run.sh
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file CHANGELOG.md \
+            --verify-tag

@@ -77,7 +77,8 @@ macOS only；仅 Claude 系模型；Fast 需手动；中文 prompt。Roadmap：�
 - AppleScript 里 `STOP` 等是保留字，布局脚本变量不能这么命名。
 - 桌面版主控的显示名 ≠ `--name`，且角色无法观测 READY 送达地址 → 来源校验用团队令牌（不靠名字/地址）。
 - 角色向裸 socket 地址发过一次消息后，其后续消息会持续被扣 → 协议：回报只按主控名发一次；坏了用 restart-role.sh。
-- 桌面版会话不读项目级 settings.local.json 的 crossSessionInbound、不显示批准框、无 /status。
+- 能否收到 bypass 角色的消息**取决于主控自身权限模式**（bypass 可收；auto/default 会被扣），与是不是桌面版无关——2026-08-19 实测命令行 auto 模式主控同样被扣，且项目级 `settings.local.json` 的 `crossSessionInbound: accept` 在位却未生效（根因未定位）。唯一经过完整 E2E 验证的配置是 **bypass 模式主控**。桌面版另有：不显示批准框、无 `/status`。
+- **超时保护与 macOS 自动化授权弹窗存在张力**：首次开窗时 osascript 会合法阻塞等用户点“允许”，短超时会把它掐掉。所以 `launch-team.sh` 的开窗（heredoc）调用刻意不套 `osa`；`restart-role.sh` 的开窗调用则套了——用它时团队已在跑、授权早已给过。环境异常导致超时误伤时，可调大 `ATC_OSA_TIMEOUT`。
 - 主控跑 launch/shutdown/restart 脚本必须非沙箱（AppleScript + 杀进程）。
 - 角色对 runs/ 的通配符 rm 会触发 bypass 也拦不住的确认框 → 协议：mktemp -d。
 - 短时间内重发一模一样的消息会被系统去重丢弃，重发要换措辞。

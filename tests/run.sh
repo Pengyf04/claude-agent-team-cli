@@ -51,6 +51,7 @@ for r in planner plan-reviewer executor verifier; do
   check "roles/$r.md 存在且含通信协议" "grep -q '通信协议' '$SKILL/roles/$r.md'"
 done
 for r in planner plan-reviewer executor verifier; do
+  check "roles/${r}.md 含交付前清理临时产物纪律" "grep -q '交付前清理临时产物' '$SKILL/roles/$r.md' && grep -q '不要对' '$SKILL/roles/$r.md'"
   check "roles/$r.md 含令牌校验/名字回报/mktemp 纪律" "grep -q '团队令牌' '$SKILL/roles/$r.md' && grep -q '绝不发往 socket 地址' '$SKILL/roles/$r.md' && grep -q 'mktemp -d' '$SKILL/roles/$r.md'"
 done
 check "restart-role.sh 语法" "bash -n '$SKILL/scripts/restart-role.sh'"
@@ -98,6 +99,21 @@ E="$SKILL/scripts/ensure-inbound.sh"; Q="$TMP/proj2"; mkdir -p "$Q/.claude" && g
 printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$Q/.claude/settings.local.json"
 check "首次写入输出 NEW 且保留其他键" "[ \"\$(bash '$E' '$Q')\" = NEW ] && grep -q 'Bash(ls)' '$Q/.claude/settings.local.json' && grep -q '\"crossSessionInbound\": \"accept\"' '$Q/.claude/settings.local.json'"
 check "再次运行输出 EXISTS" "[ \"\$(bash '$E' '$Q')\" = EXISTS ]"
+# 收尾移除 crossSessionInbound 必须只摘该键：它是有安全含义的持久配置，任务结束不该留着；
+# 但直接删整个文件会连带抹掉用户自己的项目配置（2026-08-19 E2E 实测发生过）。
+RM1="${TMP}/rm1"; mkdir -p "${RM1}/.claude"
+printf '{"crossSessionInbound":"accept","permissions":{"allow":["Bash(ls)"]}}\n' > "${RM1}/.claude/settings.local.json"
+R1="$(bash "${E}" "${RM1}" --remove)"
+check "--remove 返回 REMOVED" "[ '${R1}' = REMOVED ]"
+check "--remove 只摘该键，保留其他内容" "! grep -q crossSessionInbound '${RM1}/.claude/settings.local.json' && grep -q 'Bash(ls)' '${RM1}/.claude/settings.local.json'"
+RM2="${TMP}/rm2"; mkdir -p "${RM2}/.claude"
+printf '{"crossSessionInbound":"accept"}\n' > "${RM2}/.claude/settings.local.json"
+bash "${E}" "${RM2}" --remove >/dev/null
+check "--remove 在只剩该键时删掉整个文件不留空壳" "[ ! -f '${RM2}/.claude/settings.local.json' ]"
+check "--remove 幂等（已无该键返回 ABSENT）" "[ \"\$(bash '${E}' '${RM1}' --remove)\" = ABSENT ]"
+check "--remove 幂等（无文件返回 NOFILE）" "[ \"\$(bash '${E}' '${RM2}' --remove)\" = NOFILE ]"
+RM3="${TMP}/rm3"; mkdir -p "${RM3}/.claude"; printf '{ not json' > "${RM3}/.claude/settings.local.json"
+check "--remove 遇非法 JSON 拒绝且不改动" "! bash '${E}' '${RM3}' --remove >/dev/null 2>&1 && grep -q 'not json' '${RM3}/.claude/settings.local.json'"
 check ".git/info/exclude 含运行时产物" "grep -qxF '.claude/agent-team-cli/' '$Q/.git/info/exclude' && grep -qxF '.claude/settings.local.json' '$Q/.git/info/exclude'"
 
 mark "小节 3c. shutdown-team.sh --abandon"; echo "== 3c. shutdown-team.sh --abandon =="
@@ -143,6 +159,15 @@ check "打印超时警告并改用兜底屏幕尺寸" "grep -q '兜底值' '$TMP
 T2=$(date +%s)
 PATH="$FAKEBIN:$PATH" bash "$SKILL/scripts/doctor.sh" "$R" >/dev/null 2>&1
 T3=$(date +%s)
+RR="${TMP}/proj-restart"; mkdir -p "${RR}/.claude/agent-team-cli"
+printf 'main=1\nplanner=99999991\n' > "${RR}/.claude/agent-team-cli/windows.txt"
+echo '#!/bin/bash' > "${RR}/.claude/agent-team-cli/run-planner.sh"
+T6=$(date +%s)
+PATH="${FAKEBIN}:$PATH" bash "${SKILL}/scripts/restart-role.sh" "${RR}" planner >/dev/null 2>&1
+RRC=$?; T7=$(date +%s)
+check "restart-role.sh 在 osascript 阻塞时不挂死（实测 $((T7-T6)) 秒）" "[ $((T7-T6)) -lt 30 ]"
+check "restart-role.sh 开窗超时时报错退出而非静默" "[ ${RRC} -ne 0 ]"
+check "restart-role.sh 超时不会把空窗口 id 写进 windows.txt" "! grep -qE '^planner=$' '${RR}/.claude/agent-team-cli/windows.txt'"
 check "doctor.sh 同环境下也在 30 秒内结束（实测 $((T3-T2)) 秒）" "[ $((T3-T2)) -lt 30 ]"
 
 # 回归 2026-08-19：SIGPIPE 被忽略时（SIG_IGN 会被子进程继承，Node 写的 GitHub Actions

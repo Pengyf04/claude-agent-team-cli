@@ -2,7 +2,7 @@
 
 本项目遵循语义化版本。
 
-## [0.1.0] - 2026-08-18
+## [0.1.0] - 2026-08-19
 ### 首个公开版本
 - `/agent-team-cli` skill：主控开 4 个 Terminal 窗口启动 planner / plan-reviewer / executor / verifier 独立会话，用 Claude Code 跨会话消息驱动「规划环 → 卡点A → 执行验证环 → 终验 → 卡点B」状态机；循环硬上限 5 / 8 / 2；两个人工卡点绝不自动通过
 - 角色协议：只与主控通信、双通道来源校验（主控名匹配 或 首次握手锚定地址）、消息只传信号内容走文件、单行结构化标记
@@ -15,6 +15,10 @@
 - 文档：README（macOS only 置顶）、architecture、design-decisions、troubleshooting、manual-e2e-checklist、HANDOFF；examples/pomodoro-cli 真实运行记录
 - 所有 `osascript` 调用经 `osa` 超时包装器（`ATC_OSA_TIMEOUT`，默认 8 秒）：headless 环境（CI runner / SSH / 锁屏 / 自动化授权未决）下 osascript 会无限阻塞而非报错，原有失败兜底永远走不到，会导致 `launch-team.sh` 与 `doctor.sh` 无提示卡死
 - 测试：新增 osascript 阻塞回归（伪造阻塞型 osascript 验证不挂死）、Markdown 内部链接完整性、`ATC_*` 配置项与 README/doctor.sh 的同步校验；shellcheck 扩展到覆盖 `tests/run.sh` 自身；泄漏扫描改为只查已入库文件；测试末尾声明未覆盖范围，避免绿灯被误读为全覆盖
+- `restart-role.sh` 的全部 `osascript` 调用补上超时包装（含把开窗的 heredoc 改写为临时文件调用）：它是「角色坏掉时的救援工具」，实测原先在阻塞型 osascript 下会永久挂死；超时后报错退出且不会把空窗口 id 写进 `windows.txt`
+- `ensure-inbound.sh` 新增 `--remove`：收尾时**只摘掉 `crossSessionInbound` 一个键**并保留文件其余内容，仅当再无其他键时才删除整个文件（此前 P5 收尾会删掉整个 `settings.local.json`，可能连带抹掉用户自己的项目配置）；SKILL P5 改为调用该脚本，禁止手工编辑该 JSON
+- 角色协议新增「交付前清理临时产物」：`deliverable/` 只应包含交付物本身，`__pycache__` / `.pytest_cache` 等缓存回报前删除（删除用精确路径，禁止对 `runs/` 用通配符 `rm`）
+- README 快速开始改为教已验证配置 `claude --name atc-main --permission-mode bypassPermissions`，并说明两个参数各自解决哪个会导致团队卡死的问题；SKILL P0 增加主控权限模式自检
 - `shutdown-team.sh` 关团队时一并作废团队令牌：令牌需能区分团队世代，否则侥幸存活的旧角色窗口仍能接受新团队指令——正好是它要防的场景
 - 关团队后若仍有进行中的 `state.md`，`shutdown-team.sh` 明确提示孤儿状态并给出可直接执行的 `--abandon` 命令（不自动放弃：中途重启角色时自动放弃会误伤）
 - `session-recover.sh` 增加团队活体校验：注入时报告窗口记录与在册角色会话；若任务标记进行中却无任何角色在册，明确警告不得直接续跑，并提醒核对 `state.md` 里记录的主控名是否已作废。校验只读文件与会话注册表，绝不调 `osascript`（该 hook 在任意项目启动时都会跑）

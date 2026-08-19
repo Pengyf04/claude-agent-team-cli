@@ -10,18 +10,41 @@ set -uo pipefail
 export ATC_OSA_TIMEOUT=1
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL="$ROOT/skills/agent-team-cli"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"
+# ---------- 看门狗 ----------
+# 测试套件自己限时中止，而不是等 CI 作业超时被强制取消：被取消时缓冲的日志会丢失，
+# 挂死点就无从定位（2026-08-18 首次 CI 事故正是栽在这上面）。
+# 同时它也保证「测试套件本身绝不会永久挂死」。
+MARKER="$TMP/marker"; printf '%s' '启动' > "$MARKER"
+mark() { printf '%s' "$*" > "$MARKER"; }
+SUITE_TIMEOUT="${TEST_TIMEOUT:-600}"
+MAINPID=$$
+(
+  # 用「多次短 sleep」而不是「一次长 sleep」：kill -9 只能杀掉子 shell，
+  # 它底下正在跑的 sleep 会成为孤儿继续存活，并且继承着 stdout。
+  # 若 stdout 是管道（CI runner 正是用管道捕获步骤输出），读端就永远等不到 EOF ——
+  # 脚本明明跑完了，步骤却一直挂着。短 sleep 把孤儿存活时间压到 1 秒以内。
+  _i=0
+  while [ "$_i" -lt "$SUITE_TIMEOUT" ]; do sleep 1; _i=$((_i+1)); done
+  printf '\n\xe2\x9d\x8c\xe2\x9d\x8c 测试套件整体超时（%s 秒）。最后进入的检查点: %s\n' \
+    "$SUITE_TIMEOUT" "$(cat "$MARKER" 2>/dev/null)"
+  printf '（这是 tests/run.sh 自带的看门狗，用于精确定位挂死位置）\n'
+  kill -9 "$MAINPID" 2>/dev/null
+) &
+WATCHDOG=$!
+disown "$WATCHDOG" 2>/dev/null || true   # 免得被杀时 bash 打印 "Killed: 9" 污染 CI 日志
+trap 'kill -9 "$WATCHDOG" 2>/dev/null; rm -rf "$TMP"' EXIT
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); printf '  ✅ %s\n' "$*"; }
 ko()  { FAIL=$((FAIL+1)); printf '  ❌ %s\n' "$*"; }
-check() { if eval "$2"; then ok "$1"; else ko "$1"; fi; }
+check() { mark "检查: $1"; if eval "$2"; then ok "$1"; else ko "$1"; fi; }
 
-echo "== 1. 语法 =="
+mark "小节 1. 语法"; echo "== 1. 语法 =="
 for f in "$ROOT"/install.sh "$ROOT"/uninstall.sh "$SKILL"/scripts/*.sh; do
   check "bash -n $(basename "$f")" "bash -n '$f'"
 done
 
-echo "== 2. SKILL frontmatter / 角色文件 =="
+mark "小节 2. SKILL frontmatter / 角色文件"; echo "== 2. SKILL frontmatter / 角色文件 =="
 check "SKILL.md 有 name: agent-team-cli" "grep -q '^name: agent-team-cli$' '$SKILL/SKILL.md'"
 check "SKILL.md 有 description" "grep -q '^description: ' '$SKILL/SKILL.md'"
 for r in planner plan-reviewer executor verifier; do
@@ -33,7 +56,7 @@ done
 check "restart-role.sh 语法" "bash -n '$SKILL/scripts/restart-role.sh'"
 check "restart-role.sh 拒绝非法角色" "! bash '$SKILL/scripts/restart-role.sh' '$TMP' bogus >/dev/null 2>&1"
 
-echo "== 3. launch-team.sh DRY_RUN =="
+mark "小节 3. launch-team.sh DRY_RUN"; echo "== 3. launch-team.sh DRY_RUN =="
 P="$TMP/proj"; mkdir -p "$P"
 DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main demo >/dev/null 2>&1
 check "默认: planner 用 claude-fable-5/xhigh" "grep -q -- '--model \"claude-fable-5\"' '$P/.claude/agent-team-cli/run-planner.sh' && grep -q -- '--effort \"xhigh\"' '$P/.claude/agent-team-cli/run-planner.sh'"
@@ -60,14 +83,14 @@ check "路径含单引号被拒绝" "! DRY_RUN=1 bash '$SKILL/scripts/launch-tea
 rm -rf "$P/.claude"; DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main >/dev/null 2>&1
 check "无后缀: 裸角色名" "grep -q -- '--name \"executor\"' '$P/.claude/agent-team-cli/run-executor.sh'"
 
-echo "== 3b. ensure-inbound.sh =="
+mark "小节 3b. ensure-inbound.sh"; echo "== 3b. ensure-inbound.sh =="
 E="$SKILL/scripts/ensure-inbound.sh"; Q="$TMP/proj2"; mkdir -p "$Q/.claude" && git -C "$Q" init -q 2>/dev/null
 printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$Q/.claude/settings.local.json"
 check "首次写入输出 NEW 且保留其他键" "[ \"\$(bash '$E' '$Q')\" = NEW ] && grep -q 'Bash(ls)' '$Q/.claude/settings.local.json' && grep -q '\"crossSessionInbound\": \"accept\"' '$Q/.claude/settings.local.json'"
 check "再次运行输出 EXISTS" "[ \"\$(bash '$E' '$Q')\" = EXISTS ]"
 check ".git/info/exclude 含运行时产物" "grep -qxF '.claude/agent-team-cli/' '$Q/.git/info/exclude' && grep -qxF '.claude/settings.local.json' '$Q/.git/info/exclude'"
 
-echo "== 3c. shutdown-team.sh --abandon =="
+mark "小节 3c. shutdown-team.sh --abandon"; echo "== 3c. shutdown-team.sh --abandon =="
 mkdir -p "$Q/runs/demo" && printf 'skill: agent-team-cli/SKILL.md\n阶段: [2] 执行验证环\n' > "$Q/runs/demo/state.md"
 bash "$SKILL/scripts/shutdown-team.sh" "$Q" --abandon demo >/dev/null 2>&1
 check "--abandon 把阶段改为已放弃完成" "grep -q '^阶段: \[P5\] 完成（已放弃）' '$Q/runs/demo/state.md'"
@@ -77,7 +100,7 @@ echo "== 3d. PATH 无 claude 时 DRY_RUN 仍可用（CI 场景）=="
 rm -rf "$P/.claude"
 check "无 claude 也能 DRY_RUN" "env -i HOME='$HOME' PATH=/usr/bin:/bin DRY_RUN=1 bash '$SKILL/scripts/launch-team.sh' '$P' main demo >/dev/null 2>&1 && [ -f '$P/.claude/agent-team-cli/run-planner.sh' ]"
 
-echo "== 4. 陈旧记录判定 =="
+mark "小节 4. 陈旧记录判定"; echo "== 4. 陈旧记录判定 =="
 rm -rf "$P/.claude"; mkdir -p "$P/.claude/agent-team-cli"
 printf 'main=0\nplanner=99999991\nexecutor=99999992\n' > "$P/.claude/agent-team-cli/windows.txt"
 OUT="$(DRY_RUN=1 bash "$SKILL/scripts/launch-team.sh" "$P" main demo 2>&1)"
@@ -100,7 +123,7 @@ PATH="$FAKEBIN:$PATH" bash "$SKILL/scripts/doctor.sh" "$R" >/dev/null 2>&1
 T3=$(date +%s)
 check "doctor.sh 同环境下也在 30 秒内结束（实测 $((T3-T2)) 秒）" "[ $((T3-T2)) -lt 30 ]"
 
-echo "== 5. session-recover.sh 三场景 =="
+mark "小节 5. session-recover.sh 三场景"; echo "== 5. session-recover.sh 三场景 =="
 H="$SKILL/scripts/session-recover.sh"
 mkdir -p "$TMP/empty"; cd "$TMP/empty" || exit 1
 check "无任务目录 → 静默" "[ -z \"\$(echo '{\"source\":\"startup\"}' | bash '$H')\" ]"
@@ -143,7 +166,7 @@ else
   ko "python3 不可用，跳过 install/uninstall 测试"
 fi
 
-echo "== 7. 仓库卫生 =="
+mark "小节 7. 仓库卫生"; echo "== 7. 仓库卫生 =="
 LEAK_PAT="$(printf '%s\\|%s\\|%s' 'pengyuan''feng' 'agent-''d2' '/tmp/cc-''socks')"
 # 只扫已入库文件：把关的是"发出去的内容"。扫目录树会被本地产物（worktree 的 .git 指针、
 # 临时文件等）误报，而那些东西根本不会被推送。
@@ -151,7 +174,7 @@ leak_scan() { git -C "$ROOT" ls-files -z | xargs -0 grep -n "$LEAK_PAT"; }
 check "已入库文件无个人路径/会话名残留" "[ -z \"\$(leak_scan)\" ]"
 check "runs/ 与运行时目录未入库" "! git -C '$ROOT' ls-files 2>/dev/null | grep -qE '^runs/|\.claude/agent-team-cli/'"
 
-echo "== 7b. 文档完整性 / 配置项同步 =="
+mark "小节 7b. 文档完整性 / 配置项同步"; echo "== 7b. 文档完整性 / 配置项同步 =="
 # 历史 bug：examples 断链导致新人照 README 走不通。链接是分发路径的一部分，必须自动把关。
 BROKEN=""
 while IFS= read -r f; do

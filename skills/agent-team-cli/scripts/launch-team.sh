@@ -25,6 +25,9 @@ osa() {
   out="$(mktemp)"
   "$@" >"$out" 2>&1 &
   pid=$!
+  # 下面的 >/dev/null 是承重的，别当冗余删掉：kill -9 杀不掉子 shell 底下正在跑的 sleep，
+  # 它会成为孤儿并继承 stdout；若 stdout 是管道（CI runner 用管道捕获输出），读端就永远
+  # 等不到 EOF，命令明明结束了调用方却一直挂着。
   { sleep "$secs"; kill -9 "$pid" 2>/dev/null; } >/dev/null 2>&1 &
   watcher=$!
   rc=0; wait "$pid" 2>/dev/null || rc=$?

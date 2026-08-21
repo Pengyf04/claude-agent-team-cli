@@ -80,6 +80,12 @@ macOS only；仅 Claude 系模型；Fast 需手动；中文 prompt。Roadmap：�
 - **桌面版客户端可作主控**（2026-08-21 实测通过），但有三个坑：① 只能用用户级 `~/.claude/settings.json` 配 `crossSessionInbound: accept`，改完要重启客户端；② 注册名是派生的、**每次会话进程重建都会变**（客户端自动更新就会触发），要用**斜杠命令** `/rename` 固定——客户端命令菜单里另有一个同名的**弹窗式** `Rename this session`，它只改对话标题、不改注册名，用错了没有任何报错，是真陷阱；③ 桌面版不显示跨会话消息批准框，配置错了就是**静默卡住**。doctor 现在会把这三条连同 CLI 登录状态一起查出来。
 - **CLI 凭据与桌面客户端各自独立**：客户端能用不代表 CLI 能用。凭据失效时角色窗口停在 "Login expired"、启动指令不执行、不发 READY，主控只看到"READY 收不齐"，极易误判成消息通路问题（2026-08-21 为此白查了一整轮）。doctor 已加 `claude auth status` 检查。
 - **`shutdown-team.sh` 曾谎报关窗成功**：取 tty 失败 → 静默跳过杀进程 → 关窗失败被吞 → 照样打印"已关闭"。修复后以事实为准（回查窗口存在性），有残留时非零退出并保留 windows.txt。**"报告成功但实际没做"比报告失败危险得多**，写新代码时警惕同类模式。
+- **`pgrep -t` / `pkill -t` 在 macOS 上匹配不到目标进程**（同一 tty，`ps -t ttysNNN` 能列出
+  claude，`pgrep -t ttysNNN` 却返回空）。shutdown/restart 曾因此"没杀 → 不等 → -9 升级从不
+  触发"三连空转，却以为自己动过手。**杀进程一律先用 `ps -t` 取 pid，再按 pid 发信号**。
+- **`osa` 会把 osascript 的报错文本一并返回**（窗口已不存在时尤其明显）。拿它当 tty 用会
+  导致 `ps -t "<报错文本>"` 失败，在 `set -euo pipefail` 下静默中止整个脚本。用返回值前
+  必须校验形态（tty 只接受 `/dev/tty*`），并给可能失败的管道加 `|| true`。
 - **主控必须带 `--settings '{"crossSessionInbound":"accept"}'` 启动**。没有显式设置时，能否收到角色消息取决于双方权限模式是否同类（bypass↔bypass / prompting↔prompting），主控只要不是 bypass 就会被扣。**写进项目级 `settings.local.json` 是结构性空操作**——该键的项目级来源只在收紧时才被采纳，而 accept 是最宽松档，永远不满足（根因已定位并实证，见 design-decisions #6）。原 `ensure-inbound.sh` 干的就是这件无效的事，已删除该逻辑并改名 `prepare-project.sh`（只保留写 .git/info/exclude）。桌面版主控不能用 `--settings`，只能靠让自己也跑 bypassPermissions。
 - **超时保护与 macOS 自动化授权弹窗存在张力**：首次开窗时 osascript 会合法阻塞等用户点“允许”，短超时会把它掐掉。所以 `launch-team.sh` 的开窗（heredoc）调用刻意不套 `osa`；`restart-role.sh` 的开窗调用则套了——用它时团队已在跑、授权早已给过。环境异常导致超时误伤时，可调大 `ATC_OSA_TIMEOUT`。
 - 主控跑 launch/shutdown/restart 脚本必须非沙箱（AppleScript + 杀进程）。

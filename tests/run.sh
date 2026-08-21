@@ -162,6 +162,22 @@ printf '{"pid":%s,"name":"some-old-name","entrypoint":"cli","cwd":"%s"}\n' "$$" 
 NMOUT2="$(cd "${NM}" && echo '{"source":"startup"}' | CLAUDE_CONFIG_DIR="${FAKEHOME}" bash "${SKILL}/scripts/session-recover.sh" 2>&1)"
 check "名字一致时不误报" "printf '%s' \"\${NMOUT2}\" | grep -q '主控名一致' && ! printf '%s' \"\${NMOUT2}\" | grep -q '主控名不一致'"
 
+mark "小节 3b2. 杀进程不得依赖 pgrep -t / pkill -t"; echo "== 3b2. 杀进程不得依赖 pgrep -t/pkill -t =="
+# 回归 2026-08-21 终端版 E2E：macOS 上 `pgrep -t`/`pkill -t` 匹配不到目标进程
+# （同一 tty，`ps -t ttysNNN` 能列出 claude，`pgrep -t ttysNNN` 返回空），
+# 于是 shutdown/restart 出现"没杀 → 不等 → -9 升级从不触发"的三连空转，
+# 脚本却以为自己动过手。修法：一律先取 pid，再按 pid 发信号。
+for sc in shutdown-team.sh restart-role.sh; do
+  check "${sc} 不再使用 pkill -t/pgrep -t（注释除外）" \
+    "! grep -vE '^[[:space:]]*#' '${SKILL}/scripts/${sc}' | grep -qE '(pgrep|pkill)[[:space:]]+-[a-z]*t([[:space:]]|$)'"
+  check "${sc} 改用 kill -TERM <pid> 结束进程" "grep -vE '^[[:space:]]*#' '${SKILL}/scripts/${sc}' | grep -q 'kill -TERM'"
+  check "${sc} 有 KILL 升级路径" "grep -vE '^[[:space:]]*#' '${SKILL}/scripts/${sc}' | grep -q 'kill -9'"
+  check "${sc} 取 pid 用 ps -t（可靠）而非 pgrep -t" "grep -q 'ps -t' '${SKILL}/scripts/${sc}'"
+done
+# 关窗结果必须以回查为准，不得无条件宣布成功
+check "shutdown-team.sh 关窗后回查 exists window" "grep -q 'exists window id' '${SKILL}/scripts/shutdown-team.sh' && grep -q 'STILL' '${SKILL}/scripts/shutdown-team.sh'"
+check "restart-role.sh 关窗后回查而非无条件宣布已关闭" "grep -q 'STILL_W' '${SKILL}/scripts/restart-role.sh'"
+
 mark "小节 3c. shutdown-team.sh --abandon"; echo "== 3c. shutdown-team.sh --abandon =="
 mkdir -p "$Q/runs/demo" && printf 'skill: agent-team-cli/SKILL.md\n阶段: [2] 执行验证环\n' > "$Q/runs/demo/state.md"
 bash "$SKILL/scripts/shutdown-team.sh" "$Q" --abandon demo >/dev/null 2>&1

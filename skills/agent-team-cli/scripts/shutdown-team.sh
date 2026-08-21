@@ -50,31 +50,48 @@ while IFS= read -r pair; do
   [ "$role" = "main" ] && continue
   case "$wid" in ''|0|*[!0-9]*) echo "跳过 ${role}（无有效窗口 ID: '$wid'）"; continue ;; esac
 
-  # ---- 1) 结束窗口内进程：优先按 tty，拿不到 tty 时按会话名兜底 ----
-  # 2026-08-21 桌面主控 E2E 实测：查 tty 失败时这里曾静默跳过，进程没死、窗口没关，
-  # 脚本却打印"已关闭" —— "报告成功但实际没做"是最危险的失败模式。现在以事实为准。
+  # ---- 1) 结束窗口内进程 ----
+  # 2026-08-21 终端版回归实测：`pgrep -t` / `pkill -t` 在 macOS 上匹配不到目标进程
+  # （同一 tty，`ps -t ttys001` 能列出 claude，`pgrep -t ttys001` 返回空），导致
+  # "没杀 → 不等 → -9 升级从不触发" 三连空转，脚本却以为自己动过手。
+  # 现在一律先取 pid 再按 pid 操作：pid 是唯一可靠的抓手。
+  PIDS=""
   TTY="$(osa "${OSA_T}" osascript -e "tell application \"Terminal\" to get tty of tab 1 of window id $wid" 2>/dev/null || true)"
-  if [ -n "$TTY" ]; then
-    TSHORT="${TTY#/dev/}"
-    pkill -t "$TSHORT" 2>/dev/null || true
-    # claude 优雅退出通常需要 3–10 秒：轮询最多 15 秒等进程退出，仍在则 kill -9 再等 2 秒
-    for _ in $(seq 1 15); do
-      pgrep -t "$TSHORT" >/dev/null 2>&1 || break
+  # osa 会把 osascript 的报错文本也一并返回（窗口已不存在时尤其明显），
+  # 因此必须校验形态，只接受真正的 tty，否则当作取不到、走兜底。
+  case "${TTY}" in
+    /dev/tty*|tty*) ;;
+    *) TTY="" ;;
+  esac
+  if [ -n "${TTY}" ]; then
+    # ps -t 可靠；从中挑出本角色的 claude 进程（避免误杀同 tty 的 shell / MCP 子进程）
+    PIDS="$(ps -t "${TTY#/dev/}" -o pid=,command= 2>/dev/null | grep -F -- "--name ${role} " | awk '{print $1}' || true)"
+  fi
+  if [ -z "${PIDS}" ]; then
+    # 兜底：按会话名精确匹配（名字由 launch-team.sh 生成，全机唯一）
+    PIDS="$(pgrep -f -- "claude --name ${role} " 2>/dev/null || true)"
+  fi
+
+  if [ -n "${PIDS}" ]; then
+    # shellcheck disable=SC2086  # PIDS 为空白分隔的纯数字列表，需按多参数展开
+    kill -TERM ${PIDS} 2>/dev/null || true
+    # claude 优雅退出通常 3–10 秒；给足 20 秒，仍在则 KILL
+    for _ in $(seq 1 20); do
+      STILL_P=""
+      for pp in ${PIDS}; do kill -0 "$pp" 2>/dev/null && STILL_P="${STILL_P} $pp"; done
+      [ -z "${STILL_P}" ] && break
       sleep 1
     done
-    if pgrep -t "$TSHORT" >/dev/null 2>&1; then
-      pkill -9 -t "$TSHORT" 2>/dev/null || true
+    STILL_P=""
+    for pp in ${PIDS}; do kill -0 "$pp" 2>/dev/null && STILL_P="${STILL_P} $pp"; done
+    if [ -n "${STILL_P}" ]; then
+      echo "提示: ${role} 未在 20 秒内优雅退出，升级为强制结束:${STILL_P}" >&2
+      # shellcheck disable=SC2086
+      kill -9 ${STILL_P} 2>/dev/null || true
       sleep 2
     fi
   else
-    # 兜底：按角色会话名精确匹配 claude 进程（名字由 launch-team.sh 生成，唯一）
-    echo "提示: 无法取得 ${role} 窗口的 tty（osascript 超时或授权问题），改按会话名结束进程" >&2
-    pkill -f -- "claude --name ${role} " 2>/dev/null || true
-    for _ in $(seq 1 15); do
-      pgrep -f -- "claude --name ${role} " >/dev/null 2>&1 || break
-      sleep 1
-    done
-    pgrep -f -- "claude --name ${role} " >/dev/null 2>&1 && { pkill -9 -f -- "claude --name ${role} " 2>/dev/null || true; sleep 2; }
+    echo "提示: 未找到 ${role} 的 claude 进程（可能已自行退出）" >&2
   fi
   if pgrep -f -- "claude --name ${role} " >/dev/null 2>&1; then
     echo "警告: ${role} 的 claude 进程仍在运行，未能结束——请手动处理" >&2

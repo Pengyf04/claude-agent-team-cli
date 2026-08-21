@@ -8,6 +8,8 @@
 
 ## P0–P3
 - [ ] `/agent-team-cli <小任务>` 被识别，主控进入目标对齐并索要验收标准
+- [ ] **若用桌面版客户端作主控**：用户级 `~/.claude/settings.json` 含 `crossSessionInbound: accept`（改后已重启客户端）；已用**斜杠命令**（非弹窗）`/rename` 固定注册名；`doctor.sh` 四项检查全绿
+- [ ] `claude auth status` 显示已登录（CLI 凭据与客户端独立，失效时角色起不来）
 - [ ] 主控启动时带了 `--settings '{"crossSessionInbound":"accept"}'`（否则角色消息会被扣，团队卡死）
 - [ ] P1：`runs/<slug>/{task.md,state.md}` 生成
 - [ ] P2：4 个 Terminal 窗口弹出、田字格布局、标题 `agent-team:<role>-<slug>`；`.claude/agent-team-cli/windows.txt` 有 5 行

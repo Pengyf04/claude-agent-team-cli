@@ -119,10 +119,39 @@ fast 模式没有启动 flag，且仅 Opus 系支持——需要时在 executor 
 
 ## 桌面版主控
 
-主控可以是 Claude Code **桌面版**的一个会话（好处：对话记录完整保留）。已实测可用，但有三点区别：
-- 桌面版会话不能 `--name`，注册名由系统派生（形如 `agent-4f`）。主控会用 `cat ~/.claude/sessions/$PPID.json` 读出自己的注册名再开团队；角色识别主控靠令牌，不受"显示名≠注册名"影响。
-- 桌面版会话**不能用 `--settings` 启动**，拿不到显式 inbound 策略，只能靠模式对等：把主控会话权限模式设为 **bypassPermissions**（与角色同类即可直送）。桌面版还**不显示**跨会话消息的批准框（被扣的消息静默过期），问题更隐蔽。⚠️ 写进项目级 `.claude/settings.local.json` 是**空操作**（原因见 [design-decisions](docs/design-decisions.md) 第 6 条），不要把它当作兜底。
-- 桌面版没有 `/status`。
+主控可以是 Claude Code **桌面版客户端**的一个会话（好处：对话记录完整保留、不必专门开终端）。已完整实测可用，但**开工前必须满足两个条件**，否则角色的 READY 会被静默丢弃——桌面版**不显示**跨会话消息的批准框，失败时屏幕上没有任何线索。
+
+**条件一：用户级 inbound 配置**（桌面版不能用 `--settings`）
+
+在 `~/.claude/settings.json` 顶层加一个键，然后**重启客户端**（该配置启动时读取）：
+
+```json
+{ "crossSessionInbound": "accept" }
+```
+
+作用域是本机所有会话；写进项目级 `.claude/settings.local.json` 是**空操作**（原因见 [design-decisions](docs/design-decisions.md) 第 6 条）。
+
+**条件二：固定注册名**
+
+桌面版会话的注册名是派生的（形如 `test1-4f`），且**每次会话进程重建都会变**（客户端更新、重启、崩溃都会触发）。用斜杠命令固定它：
+
+```
+/rename atc-main
+```
+
+> ⚠️ **客户端命令菜单里有两个 rename，只有一个有用。**
+> - 选**带 `Custom command` 标注**的那个 —— 走会话进程，改的是跨会话注册名（`ListAgents` 里看到的）
+> - **不要**选 `Rename this session` —— 那是弹窗，只改 App 的对话标题，**不改注册名**；用错了标题会变、角色却仍然找不到你，且没有任何报错
+
+**任务中途主控重启了怎么办**：重新 `/rename` 回原来的名字即可，团队不用重开。恢复 hook 会自动比对注册名与 `state.md` 的记录，不一致时直接报警并给出命令；主控恢复后还会主动向正在等待的角色补要一次回报（角色协议规定「回报只发一次」，不补要就会一直空等）。
+
+**其余差异**：桌面版没有 `/status`；`launch-team.sh` 不会移动主控窗口（写入 `main=0`，`shutdown-team.sh` 也会跳过它），建议把客户端窗口放在屏幕左侧 1/3——右侧 2/3 是四个角色窗口的田字格区域。
+
+**开工前跑一次自检**，上面两个条件和 CLI 登录状态都会被检查：
+
+```bash
+bash ~/.claude/skills/agent-team-cli/scripts/doctor.sh <你的项目目录>
+```
 
 ## 收尾与异常清理
 

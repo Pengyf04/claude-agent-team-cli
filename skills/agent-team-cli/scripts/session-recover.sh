@@ -66,8 +66,27 @@ for f in "${FOUND[@]}"; do
     echo "   请先向用户播报现状，并让用户在「重开团队继续」与「放弃该任务」之间选择；"
     echo "   放弃请用: shutdown-team.sh \"${PROJ}\" --abandon ${slug}"
   fi
-  echo "⚠️ 另注意上面 state.md 记录的「main会话名」：若与你当前会话名不符，说明主控已换名或重启，"
-  echo "   角色按旧名字寻址会失败，需按新名字重开团队（主控名不能是保留字 main）。"
+  # 主动比对注册名，而不是只提醒用户自己看：桌面版主控进程重建后派生名必变，
+  # 而角色仍按旧名字寻址 —— 桌面版没有批准框，失败时屏幕上毫无线索。
+  REC_NAME="$(sed -n 's/^main会话名:[[:space:]]*\([^｜|]*\).*/\1/p' "$f" | head -1 | sed 's/[[:space:]]*$//;s/（.*//')"
+  CUR_SESS=""; _p="${PPID}"; _i=0
+  while [ "$_i" -lt 6 ] && [ -n "$_p" ] && [ "$_p" != "1" ] && [ "$_p" != "0" ]; do
+    [ -f "${SESS_DIR}/${_p}.json" ] && { CUR_SESS="${SESS_DIR}/${_p}.json"; break; }
+    _p="$(ps -o ppid= -p "$_p" 2>/dev/null | tr -d ' ')"; _i=$((_i+1))
+  done
+  CUR_NAME=""
+  [ -n "$CUR_SESS" ] && CUR_NAME="$(sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CUR_SESS" | head -1)"
+  if [ -n "$REC_NAME" ] && [ -n "$CUR_NAME" ] && [ "$REC_NAME" != "$CUR_NAME" ]; then
+    echo "🚨 主控名不一致：state.md 记录「${REC_NAME}」，你当前的注册名是「${CUR_NAME}」。"
+    echo "   角色仍按「${REC_NAME}」寻址，它们的回报会静默丢失。**先恢复名字再继续**："
+    echo "   · 桌面版：用斜杠命令 /rename ${REC_NAME}（选带 Custom command 标注的那个；弹窗式 Rename this session 只改对话标题、无效）"
+    echo "   · 终端版：带 --name ${REC_NAME} 重启主控"
+    echo "   改完再按 state.md 续跑；不要带着当前名字往下走。"
+  elif [ -n "$REC_NAME" ] && [ -n "$CUR_NAME" ]; then
+    echo "主控名一致（${CUR_NAME}），角色寻址正常。"
+  else
+    echo "⚠️ 未能比对主控名（记录「${REC_NAME:-?}」/ 当前「${CUR_NAME:-读取失败}」）：请自行确认角色能否按记录名寻址到你。"
+  fi
 done
 echo "</agent-team-cli-recovery>"
 exit 0

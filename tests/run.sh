@@ -143,13 +143,24 @@ check "doctor 自身会话检测上溯进程树（不硬依赖父进程号）" "
 check "doctor 拒绝保留字主控名" "grep -q '保留字 main' '${SKILL}/scripts/doctor.sh'"
 
 mark "小节 5b. 恢复 hook 主控名比对"; echo "== 5b. 恢复 hook 主控名比对 =="
+# 用隔离的 CLAUDE_CONFIG_DIR 注入一个假会话注册文件，让比对有确定输入 ——
+# 不能依赖"跑测试的机器上恰好有个 claude 会话"（本地有、CI 没有，会造成本地绿 CI 红）。
 NM="${TMP}/namechk"; mkdir -p "${NM}/runs/x"
+FAKEHOME="${TMP}/fakeclaude"; mkdir -p "${FAKEHOME}/sessions"
 printf 'skill: ~/.claude/skills/agent-team-cli/SKILL.md\nmain会话名: some-old-name ｜ slug: x\n阶段: [2] 执行验证环\n正在等待: executor-x\n' > "${NM}/runs/x/state.md"
+# 假装当前 shell 的父进程就是一个注册在案的 claude 会话
+printf '{"pid":%s,"name":"current-derived-name","entrypoint":"claude-desktop","cwd":"%s"}\n' "$$" "${NM}" > "${FAKEHOME}/sessions/$$.json"
 # shellcheck disable=SC2034  # 在 check 的 eval 字符串中使用
-NMOUT="$(cd "${NM}" && echo '{"source":"startup"}' | bash "${SKILL}/scripts/session-recover.sh" 2>&1)"
+NMOUT="$(cd "${NM}" && echo '{"source":"startup"}' | CLAUDE_CONFIG_DIR="${FAKEHOME}" bash "${SKILL}/scripts/session-recover.sh" 2>&1)"
 check "记录名与当前名不符时主动报警" "printf '%s' \"\${NMOUT}\" | grep -q '主控名不一致'"
+check "报警点明记录名与当前名" "printf '%s' \"\${NMOUT}\" | grep -q 'some-old-name' && printf '%s' \"\${NMOUT}\" | grep -q 'current-derived-name'"
 check "报警附带 /rename 恢复命令" "printf '%s' \"\${NMOUT}\" | grep -q '/rename some-old-name'"
 check "报警区分两个 rename 入口" "printf '%s' \"\${NMOUT}\" | grep -q 'Custom command'"
+# 名字一致时不应误报
+printf '{"pid":%s,"name":"some-old-name","entrypoint":"cli","cwd":"%s"}\n' "$$" "${NM}" > "${FAKEHOME}/sessions/$$.json"
+# shellcheck disable=SC2034  # 在 check 的 eval 字符串中使用
+NMOUT2="$(cd "${NM}" && echo '{"source":"startup"}' | CLAUDE_CONFIG_DIR="${FAKEHOME}" bash "${SKILL}/scripts/session-recover.sh" 2>&1)"
+check "名字一致时不误报" "printf '%s' \"\${NMOUT2}\" | grep -q '主控名一致' && ! printf '%s' \"\${NMOUT2}\" | grep -q '主控名不一致'"
 
 mark "小节 3c. shutdown-team.sh --abandon"; echo "== 3c. shutdown-team.sh --abandon =="
 mkdir -p "$Q/runs/demo" && printf 'skill: agent-team-cli/SKILL.md\n阶段: [2] 执行验证环\n' > "$Q/runs/demo/state.md"

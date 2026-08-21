@@ -10,6 +10,9 @@
 - SKILL 重入检查新增两步：先核对注册名（不一致则停下要求先改回，不带错名字往下走）；恢复后**主动向正在等待的角色补要一次回报**（角色协议规定"回报只发一次"，不补要就会一直空等）
 
 ### 修复
+- **`shutdown-team.sh` / `restart-role.sh` 实际杀不掉角色进程**：`pgrep -t` / `pkill -t` 在 macOS 上匹配不到目标进程（同一 tty，`ps -t ttysNNN` 能列出 claude，`pgrep -t ttysNNN` 却返回空），造成「没杀 → 不等 → `kill -9` 升级从不触发」的三连空转。改为先用 `ps -t` 取 pid 再按 pid `kill -TERM`，20 秒未退则 `kill -9`；取不到 tty 时按会话名兜底
+- `restart-role.sh` 关窗后无条件打印「已关闭」的谎报，改为回查窗口状态后如实报告
+- 修复 `osa` 返回的 osascript 报错文本被当作 tty 使用：窗口已不存在时 `TTY` 会变成一整段错误文本，`ps -t "<错误文本>"` 失败又在 `set -euo pipefail` 下静默中止整个脚本（清理逻辑全部没跑）。现在对 tty 结果做形态校验，相关管道加 `|| true`
 - **`shutdown-team.sh` 谎报关窗成功**：取窗口 tty 失败时静默跳过杀进程，关窗失败也被吞掉，却照样打印"已关闭"。现在 tty 取不到时按会话名兜底结束进程、关窗后**回查窗口是否真的关了**、有残留则如实告警并保留 `windows.txt` 便于重试、以非零码退出
 - **项目级 `crossSessionInbound: accept` 是结构性空操作，已彻底移除相关逻辑**。该键的项目级来源（`localSettings`/`projectSettings`）只在取值比当前更严格时才被采纳，而 `accept` 是最宽松的一档（accept<hold<refuse），比较基准在无人设置时也是 `accept`，因此永远不满足「更严格」——写进 `.claude/settings.local.json` 从第一天起就没生效过。框架历次跑通靠的全是「双方权限模式同类」（主控恰好也在 bypass），不是这个配置。已通过读取实现 + 双组对照实验实证（除 `--settings` 外一切相同：无参数组被扣 `mode-mismatch`，带参数组直达）
 - 主控改用 `--settings '{"crossSessionInbound":"accept"}'` 启动（属 `flagSettings`，取到即用、只作用于本会话）。**主控不再需要跑 `bypassPermissions`**——此前为了让框架能用而要求主控跳过全部权限检查，是把问题转嫁成用户的安全等级降低

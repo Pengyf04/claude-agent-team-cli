@@ -43,17 +43,41 @@ NAME="${LINE%%=*}"; OLD="${LINE##*=}"
 
 # 1) 结束旧窗口内进程（先 TERM，轮询等待，再 KILL）并关窗
 if [ -n "$OLD" ] && [ "$OLD" != "0" ] && osa "${OSA_T}" osascript -e "tell application \"Terminal\" to exists window id $OLD" 2>/dev/null | grep -q true; then
+  # 2026-08-21 实测：`pgrep -t`/`pkill -t` 在 macOS 上匹配不到目标进程（`ps -t` 却能列出），
+  # 会造成"没杀→不等→-9 从不触发"的三连空转。一律先取 pid 再按 pid 操作。
+  PIDS=""
   TTY="$(osa "${OSA_T}" osascript -e "tell application \"Terminal\" to get tty of tab 1 of window id $OLD" 2>/dev/null || true)"
-  if [ -n "$TTY" ]; then
-    T="${TTY#/dev/}"
-    pkill -t "$T" 2>/dev/null || true
-    for _ in $(seq 1 15); do pgrep -t "$T" >/dev/null 2>&1 || break; sleep 1; done   # claude 优雅退出需数秒
-    pgrep -t "$T" >/dev/null 2>&1 && { pkill -9 -t "$T" 2>/dev/null || true; sleep 2; }
+  # osa 会把 osascript 的报错文本也一并返回（窗口已不存在时尤其明显），
+  # 因此必须校验形态，只接受真正的 tty，否则当作取不到、走兜底。
+  case "${TTY}" in
+    /dev/tty*|tty*) ;;
+    *) TTY="" ;;
+  esac
+  if [ -n "${TTY}" ]; then
+    PIDS="$(ps -t "${TTY#/dev/}" -o pid=,command= 2>/dev/null | grep -F -- "--name ${NAME} " | awk '{print $1}' || true)"
+  fi
+  [ -n "${PIDS}" ] || PIDS="$(pgrep -f -- "claude --name ${NAME} " 2>/dev/null || true)"
+  if [ -n "${PIDS}" ]; then
+    # shellcheck disable=SC2086  # 空白分隔的纯数字 pid 列表，需按多参数展开
+    kill -TERM ${PIDS} 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      LEFT_P=""; for pp in ${PIDS}; do kill -0 "$pp" 2>/dev/null && LEFT_P="${LEFT_P} $pp"; done
+      [ -z "${LEFT_P}" ] && break
+      sleep 1
+    done
+    LEFT_P=""; for pp in ${PIDS}; do kill -0 "$pp" 2>/dev/null && LEFT_P="${LEFT_P} $pp"; done
+    # shellcheck disable=SC2086
+    [ -n "${LEFT_P}" ] && { kill -9 ${LEFT_P} 2>/dev/null || true; sleep 2; }
   fi
   osa "${OSA_T}" osascript -e "tell application \"Terminal\" to close window id $OLD" >/dev/null 2>&1 || true
   sleep 1
-  osa "${OSA_T}" osascript -e "tell application \"Terminal\" to exists window id $OLD" 2>/dev/null | grep -q true && echo "警告: 旧窗口 $OLD 仍存在（可能弹出了终止确认框，请手动点击终止）" >&2
-  echo "已关闭 $NAME 的旧窗口 (id=$OLD)"
+  # 关窗结果以回查为准，不能无条件宣布"已关闭"
+  STILL_W="$(osa "${OSA_T}" osascript -e "tell application \"Terminal\" to exists window id $OLD" 2>/dev/null || echo unknown)"
+  case "${STILL_W}" in
+    false) echo "已关闭 ${NAME} 的旧窗口 (id=${OLD})" ;;
+    true)  echo "警告: 旧窗口 ${OLD} 仍存在（可能弹出了终止确认框，请手动点击终止或关闭）" >&2 ;;
+    *)     echo "警告: 无法确认旧窗口 ${OLD} 是否已关闭（osascript 无响应），请目视检查" >&2 ;;
+  esac
 else
   echo "旧窗口 $OLD 不存在，直接重开"
 fi

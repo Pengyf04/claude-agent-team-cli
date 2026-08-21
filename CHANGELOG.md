@@ -3,7 +3,14 @@
 本项目遵循语义化版本。
 
 ## [Unreleased]
+### 新增
+- **支持 Claude Code 桌面版客户端作主控**（已完整端到端实测）。三个前置条件由框架自动检查、不再靠人记：① inbound 只能用**用户级** `~/.claude/settings.json` 的 `crossSessionInbound: accept`（桌面版不能 `--settings`）；② 注册名用**斜杠命令** `/rename` 固定——客户端另有同名弹窗入口只改对话标题、不改注册名，是陷阱；③ CLI 需已登录（凭据与客户端各自独立）
+- `doctor.sh` 新增三类硬检查：CLI 登录状态、主控 inbound 通路（区分终端/桌面）、主控注册名（保留字 `main` 判为阻断、派生名给出固定建议）。自身会话检测改为**上溯进程树**，不再硬依赖父进程号（隔一层 shell 就会落空）
+- `session-recover.sh` 把主控名从"提醒用户自查"升级为**主动比对并报警**，附带可直接执行的 `/rename` 命令
+- SKILL 重入检查新增两步：先核对注册名（不一致则停下要求先改回，不带错名字往下走）；恢复后**主动向正在等待的角色补要一次回报**（角色协议规定"回报只发一次"，不补要就会一直空等）
+
 ### 修复
+- **`shutdown-team.sh` 谎报关窗成功**：取窗口 tty 失败时静默跳过杀进程，关窗失败也被吞掉，却照样打印"已关闭"。现在 tty 取不到时按会话名兜底结束进程、关窗后**回查窗口是否真的关了**、有残留则如实告警并保留 `windows.txt` 便于重试、以非零码退出
 - **项目级 `crossSessionInbound: accept` 是结构性空操作，已彻底移除相关逻辑**。该键的项目级来源（`localSettings`/`projectSettings`）只在取值比当前更严格时才被采纳，而 `accept` 是最宽松的一档（accept<hold<refuse），比较基准在无人设置时也是 `accept`，因此永远不满足「更严格」——写进 `.claude/settings.local.json` 从第一天起就没生效过。框架历次跑通靠的全是「双方权限模式同类」（主控恰好也在 bypass），不是这个配置。已通过读取实现 + 双组对照实验实证（除 `--settings` 外一切相同：无参数组被扣 `mode-mismatch`，带参数组直达）
 - 主控改用 `--settings '{"crossSessionInbound":"accept"}'` 启动（属 `flagSettings`，取到即用、只作用于本会话）。**主控不再需要跑 `bypassPermissions`**——此前为了让框架能用而要求主控跳过全部权限检查，是把问题转嫁成用户的安全等级降低
 - 角色 runner 一直就是用 `--settings` 传的，**角色侧从未受影响**

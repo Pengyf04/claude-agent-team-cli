@@ -46,6 +46,10 @@ done
 
 mark "小节 2. SKILL frontmatter / 角色文件"; echo "== 2. SKILL frontmatter / 角色文件 =="
 check "SKILL.md 有 name: agent-team-cli" "grep -q '^name: agent-team-cli$' '$SKILL/SKILL.md'"
+check "SKILL 含桌面版 inbound 指引（用户级 accept）" "grep -q 'claude-desktop' '$SKILL/SKILL.md' && grep -q '用户级' '$SKILL/SKILL.md'"
+check "SKILL 警示两个 rename 入口" "grep -q 'Custom command' '$SKILL/SKILL.md'"
+check "SKILL 重入时比对注册名并要求先改回" "grep -q '先核对自己的注册名' '$SKILL/SKILL.md'"
+check "SKILL 恢复后补 ping 正在等待的角色" "grep -q '补 ping' '$SKILL/SKILL.md'"
 check "SKILL.md 有 description" "grep -q '^description: ' '$SKILL/SKILL.md'"
 for r in planner plan-reviewer executor verifier; do
   check "roles/$r.md 存在且含通信协议" "grep -q '通信协议' '$SKILL/roles/$r.md'"
@@ -108,6 +112,55 @@ check "绝不写入 crossSessionInbound（项目级写它是空操作）" "! gre
 check "脚本自身不含 crossSessionInbound 写入逻辑" "! grep -vE '^#' '$E' | grep -q 'crossSessionInbound'"
 NG="$TMP/proj-nogit"; mkdir -p "$NG"
 check "非 git 目录静默跳过且不报错" "[ \"\$(bash '$E' '$NG')\" = OK ]"
+
+mark "小节 3b2. shutdown 如实报告（不谎报关窗）"; echo "== 3b2. shutdown 如实报告 =="
+# 回归 2026-08-21 桌面主控 E2E：查 tty 失败时静默跳过杀进程、关窗失败也被吞掉，
+# 脚本却打印"已关闭"。"报告成功但实际没做"是最危险的失败模式。
+FB="${TMP}/fakebin2"; mkdir -p "${FB}"
+printf '#!/bin/bash\nsleep 120\n' > "${FB}/osascript"; chmod +x "${FB}/osascript"
+SD3="${TMP}/sd3"; mkdir -p "${SD3}/.claude/agent-team-cli"
+printf 'main=0\nplanner-zz=99999991\n' > "${SD3}/.claude/agent-team-cli/windows.txt"
+echo tok > "${SD3}/.claude/agent-team-cli/token"
+echo '#!/bin/bash' > "${SD3}/.claude/agent-team-cli/run-planner.sh"
+bash -c 'exec -a "claude --name planner-zz --model x" sleep 300' & FAKEPID=$!
+sleep 1
+# shellcheck disable=SC2034  # 在 check 的 eval 字符串中使用
+SD3OUT="$(PATH="${FB}:$PATH" ATC_OSA_TIMEOUT=1 bash "${SKILL}/scripts/shutdown-team.sh" "${SD3}" 2>&1)"; SD3RC=$?
+sleep 1
+check "osascript 阻塞时按会话名兜底结束角色进程" "! ps -p ${FAKEPID} >/dev/null 2>&1"
+check "无法确认关窗时不谎报已关闭" "! printf '%s' \"\${SD3OUT}\" | grep -q '已关闭 planner-zz'"
+check "无法确认关窗时如实告警" "printf '%s' \"\${SD3OUT}\" | grep -q '未能确认关闭'"
+check "有残留时以非零码退出" "[ ${SD3RC} -ne 0 ]"
+check "有残留时保留 windows.txt 便于重试" "[ -f '${SD3}/.claude/agent-team-cli/windows.txt' ]"
+check "有残留时仍作废令牌" "[ ! -f '${SD3}/.claude/agent-team-cli/token' ]"
+kill -9 ${FAKEPID} 2>/dev/null || true
+
+mark "小节 3b3. doctor 桌面版/登录检查"; echo "== 3b3. doctor 桌面版与登录检查 =="
+check "doctor 含 CLI 登录检查" "grep -q 'claude auth status' '${SKILL}/scripts/doctor.sh'"
+check "doctor 含桌面版用户级 accept 检查" "grep -q 'crossSessionInbound' '${SKILL}/scripts/doctor.sh' && grep -q 'claude-desktop' '${SKILL}/scripts/doctor.sh'"
+check "doctor 警示两个 rename 入口的陷阱" "grep -q 'Custom command' '${SKILL}/scripts/doctor.sh'"
+check "doctor 自身会话检测上溯进程树（不硬依赖父进程号）" "grep -q 'find_self_session' '${SKILL}/scripts/doctor.sh'"
+check "doctor 拒绝保留字主控名" "grep -q '保留字 main' '${SKILL}/scripts/doctor.sh'"
+
+mark "小节 5b. 恢复 hook 主控名比对"; echo "== 5b. 恢复 hook 主控名比对 =="
+# 用隔离的 CLAUDE_CONFIG_DIR 注入一个假会话注册文件，让比对有确定输入 ——
+# 不能依赖"跑测试的机器上恰好有个 claude 会话"（本地有、CI 没有，会造成本地绿 CI 红）。
+NM="${TMP}/namechk"; mkdir -p "${NM}/runs/x"
+FAKEHOME="${TMP}/fakeclaude"; mkdir -p "${FAKEHOME}/sessions"
+printf 'skill: ~/.claude/skills/agent-team-cli/SKILL.md\nmain会话名: some-old-name ｜ slug: x\n阶段: [2] 执行验证环\n正在等待: executor-x\n' > "${NM}/runs/x/state.md"
+# 假装当前 shell 的父进程就是一个注册在案的 claude 会话
+printf '{"pid":%s,"name":"current-derived-name","entrypoint":"claude-desktop","cwd":"%s"}\n' "$$" "${NM}" > "${FAKEHOME}/sessions/$$.json"
+# shellcheck disable=SC2034  # 在 check 的 eval 字符串中使用
+NMOUT="$(cd "${NM}" && echo '{"source":"startup"}' | CLAUDE_CONFIG_DIR="${FAKEHOME}" bash "${SKILL}/scripts/session-recover.sh" 2>&1)"
+check "记录名与当前名不符时主动报警" "printf '%s' \"\${NMOUT}\" | grep -q '主控名不一致'"
+check "报警点明记录名与当前名" "printf '%s' \"\${NMOUT}\" | grep -q 'some-old-name' && printf '%s' \"\${NMOUT}\" | grep -q 'current-derived-name'"
+check "报警附带 /rename 恢复命令" "printf '%s' \"\${NMOUT}\" | grep -q '/rename some-old-name'"
+check "报警区分两个 rename 入口" "printf '%s' \"\${NMOUT}\" | grep -q 'Custom command'"
+# 名字一致时不应误报
+printf '{"pid":%s,"name":"some-old-name","entrypoint":"cli","cwd":"%s"}\n' "$$" "${NM}" > "${FAKEHOME}/sessions/$$.json"
+# shellcheck disable=SC2034  # 在 check 的 eval 字符串中使用
+NMOUT2="$(cd "${NM}" && echo '{"source":"startup"}' | CLAUDE_CONFIG_DIR="${FAKEHOME}" bash "${SKILL}/scripts/session-recover.sh" 2>&1)"
+check "名字一致时不误报" "printf '%s' \"\${NMOUT2}\" | grep -q '主控名一致' && ! printf '%s' \"\${NMOUT2}\" | grep -q '主控名不一致'"
 
 mark "小节 3c. shutdown-team.sh --abandon"; echo "== 3c. shutdown-team.sh --abandon =="
 mkdir -p "$Q/runs/demo" && printf 'skill: agent-team-cli/SKILL.md\n阶段: [2] 执行验证环\n' > "$Q/runs/demo/state.md"
@@ -189,7 +242,7 @@ check "进行中任务 → 注入且识别 compact" "echo \"\$OUT\" | grep -q 'a
 OUT2="$(bash "$H" </dev/null)"
 check "进行中但无角色在册 → 给出孤儿状态警告" "echo \"\${OUT}\" | grep -q '没有任何角色会话在册'"
 check "孤儿状态警告附带 --abandon 处置命令" "echo \"\${OUT}\" | grep -q -- '--abandon'"
-check "提醒核对 state.md 记录的主控名" "echo \"\${OUT}\" | grep -q '若与你当前会话名不符'"
+check "对 state.md 记录的主控名给出比对结论" "echo \"\${OUT}\" | grep -qE '主控名不一致|主控名一致|未能比对主控名'"
 check "无 stdin 也不报错" "echo \"\$OUT2\" | grep -q 'agent-team-cli-recovery'"
 cd "$ROOT" || exit 1
 

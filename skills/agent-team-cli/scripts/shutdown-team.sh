@@ -41,6 +41,7 @@ if [ -n "$ABANDON" ]; then
 fi
 RUNTIME_DIR="$PROJ/.claude/agent-team-cli"
 WINFILE="$RUNTIME_DIR/windows.txt"
+LEFT=""
 [ -f "$WINFILE" ] || { echo "提示: 找不到 ${WINFILE}（团队未启动或窗口已手动关闭并清理）"; exit 0; }
 
 while IFS= read -r pair; do
@@ -49,6 +50,9 @@ while IFS= read -r pair; do
   [ "$role" = "main" ] && continue
   case "$wid" in ''|0|*[!0-9]*) echo "跳过 ${role}（无有效窗口 ID: '$wid'）"; continue ;; esac
 
+  # ---- 1) 结束窗口内进程：优先按 tty，拿不到 tty 时按会话名兜底 ----
+  # 2026-08-21 桌面主控 E2E 实测：查 tty 失败时这里曾静默跳过，进程没死、窗口没关，
+  # 脚本却打印"已关闭" —— "报告成功但实际没做"是最危险的失败模式。现在以事实为准。
   TTY="$(osa "${OSA_T}" osascript -e "tell application \"Terminal\" to get tty of tab 1 of window id $wid" 2>/dev/null || true)"
   if [ -n "$TTY" ]; then
     TSHORT="${TTY#/dev/}"
@@ -62,16 +66,42 @@ while IFS= read -r pair; do
       pkill -9 -t "$TSHORT" 2>/dev/null || true
       sleep 2
     fi
-  fi
-  if osa "${OSA_T}" osascript -e "tell application \"Terminal\" to close window id $wid" >/dev/null 2>&1; then
-    echo "已关闭 $role 窗口 (id=$wid)"
   else
-    echo "警告: 关闭 $role 窗口失败或已关闭 (id=$wid)——若窗口仍在请手动关闭" >&2
+    # 兜底：按角色会话名精确匹配 claude 进程（名字由 launch-team.sh 生成，唯一）
+    echo "提示: 无法取得 ${role} 窗口的 tty（osascript 超时或授权问题），改按会话名结束进程" >&2
+    pkill -f -- "claude --name ${role} " 2>/dev/null || true
+    for _ in $(seq 1 15); do
+      pgrep -f -- "claude --name ${role} " >/dev/null 2>&1 || break
+      sleep 1
+    done
+    pgrep -f -- "claude --name ${role} " >/dev/null 2>&1 && { pkill -9 -f -- "claude --name ${role} " 2>/dev/null || true; sleep 2; }
   fi
+  if pgrep -f -- "claude --name ${role} " >/dev/null 2>&1; then
+    echo "警告: ${role} 的 claude 进程仍在运行，未能结束——请手动处理" >&2
+  fi
+
+  # ---- 2) 关窗，然后回查是否真的关了（AppleScript 的返回值不可信：弹了确认框也会"成功"）----
+  osa "${OSA_T}" osascript -e "tell application \"Terminal\" to close window id $wid" >/dev/null 2>&1 || true
+  sleep 1
+  STILL="$(osa "${OSA_T}" osascript -e "tell application \"Terminal\" to exists window id $wid" 2>/dev/null || echo unknown)"
+  case "$STILL" in
+    false) echo "已关闭 $role 窗口 (id=$wid)" ;;
+    true)  echo "警告: $role 窗口 (id=$wid) 仍然存在——可能弹出了终止确认框，请手动点击终止或关闭" >&2; LEFT="${LEFT} ${role}" ;;
+    *)     echo "警告: 无法确认 $role 窗口 (id=$wid) 是否已关闭（osascript 无响应），请目视检查" >&2; LEFT="${LEFT} ${role}" ;;
+  esac
 done < "$WINFILE"
 
-rm -f "${WINFILE}" "${RUNTIME_DIR}"/run-*.sh "${RUNTIME_DIR}/token"
-echo "团队窗口清理完成（团队令牌已作废，下次开团队会重新生成）。"
+if [ -n "${LEFT}" ]; then
+  echo "" >&2
+  echo "注意: 以下角色窗口未能确认关闭:${LEFT}" >&2
+  echo "      已清理 runner 与令牌，但保留 ${WINFILE} 以便重试；手动关窗后可再次运行本脚本完成清理。" >&2
+  rm -f "${RUNTIME_DIR}"/run-*.sh "${RUNTIME_DIR}/token"
+  SHUTDOWN_RC=3
+else
+  rm -f "${WINFILE}" "${RUNTIME_DIR}"/run-*.sh "${RUNTIME_DIR}/token"
+  echo "团队窗口清理完成（团队令牌已作废，下次开团队会重新生成）。"
+  SHUTDOWN_RC=0
+fi
 # 关团队只改变了"团队是否活着"，没改变"任务是否进行中"。两者不一致会留下孤儿状态：
 # state.md 说进行中、团队却已不存在，恢复 hook 会照着一个不成立的世界继续注入。
 # 这里只提醒不自动放弃——shutdown 也可能是任务中途重启角色，自动放弃会误伤。
@@ -88,3 +118,4 @@ if [ -z "${ABANDON}" ]; then
   done
 fi
 echo "提示: 团队窗口与运行时产物已清理。"
+exit "${SHUTDOWN_RC:-0}"
